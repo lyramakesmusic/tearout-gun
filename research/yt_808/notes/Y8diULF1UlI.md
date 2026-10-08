@@ -1,0 +1,11 @@
+# Y8diULF1UlI — "Artist" (Listen Up Productions; uploaded on Faith Monaco channel) — "How I design 808s from scratch for OZ, Ronny J, CashMoneyAp" (Serum + FL, 26 min)
+Source: transcript.
+- Osc: Serum **sine** table ("cleanest, most room for post-processing"); WT position moved for more aggressive. (S)
+- Noise: **pink noise "just barely audible"** in the body — adds frequencies the sine lacks for distortion to grab onto. (S)
+- Amp env (body): **attack ~80 ms** deliberately slow so a separately designed transient layer owns the onset. Release by taste. (S)
+- Filter: LP on the noise + resonant mid boost; env → filter **drive** for initial punch. (S)
+- Body FX chain (serial): Serum distortion **band-reject @ ~110 Hz with resonance up** (resonant bump), drive, mix low → compressor early (not late) → reverb **2%** for width → EQ **LP 10 kHz** (or 7.8 k) + bell mid boost → Ozone Exciter (tube on lows) → Fruity Fast Dist low mix → FabFilter-ish "Fire Cobra" parallel w/ linear phase → Bite → **imager: mono below 250 Hz** → Saturn warm tube multiband, feedback 0. (S)
+- Transient layer (separate patch): pitched down same octaves, quick env; filter mid boost, distortion ~50 Hz, comb filter ~180 Hz, Decapitator, transient shaper sustain down, NI Driver as brickwall limiter, **linear-phase brickwall HP**, highs −6 dB above 1 kHz. Pitch bend on transient sometimes needed to blend. (S)
+- Combine: 808 body to 0 dB, brickwall limiter to glue transient + body; transient still louder → second limiter. (S)
+- Split-band trick: duplicate sample, linear-phase split, distort only top; "too much distortion on low end makes 808 overpowering". (S)
+- Shortcut: Spinz transient + FL stock clean 808 tail; **Zaytoven-style = delayed body after a kick transient**. (S)

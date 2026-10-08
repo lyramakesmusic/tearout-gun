@@ -1,18 +1,20 @@
 import { SPEC, SPEC_BY_ID, defaults, toNorm, fromNorm, encodeWav, stemLayers, engineOf } from '../dsp/engine.js';
 import { SNARE_GROUPS, SNARE_LEVEL } from '../dsp/snare_spec.js';
+import { E808_GROUPS, E808_LEVEL } from '../dsp/e808_spec.js';
+import { WHOOSH_GROUPS, WHOOSH_LEVEL } from '../dsp/whoosh_spec.js';
 import { randomize, mutate } from '../dsp/random.js';
 import { rollArchetype } from '../dsp/archetypes.js';
 import { decodeCV } from '../dsp/cvae.js';
 
 const GROUPS = [
   ['sub', 'sub'], ['tr', 'transient'], ['body', 'body'], ['synth', 'synth'], ['spice', 'spice'],
-  ...SNARE_GROUPS,
+  ...SNARE_GROUPS, ...E808_GROUPS, ...WHOOSH_GROUPS,
   ['sample1', 'sample 1'], ['sample2', 'sample 2'], ['sample3', 'sample 3'], ['crunch', 'crunch'], ['rev', 'reverb'], ['master', 'master'], ['burst', 'burst'], ['global', 'global'],
 ];
-const LEVEL = { sample1: 's1_lvl', sample2: 's2_lvl', sample3: 's3_lvl', sub: 'sub_lvl', tr: 'tr_lvl', body: 'body_lvl', synth: 'syn_lvl', spice: 'spice_lvl', rev: 'rev_lvl', crunch: 'cr_mix', ...SNARE_LEVEL };
+const LEVEL = { sample1: 's1_lvl', sample2: 's2_lvl', sample3: 's3_lvl', sub: 'sub_lvl', tr: 'tr_lvl', body: 'body_lvl', synth: 'syn_lvl', spice: 'spice_lvl', rev: 'rev_lvl', crunch: 'cr_mix', ...SNARE_LEVEL, ...E808_LEVEL, ...WHOOSH_LEVEL };
 // per-family target 1/3-octave balance (median of the references), dB re loudest band, 39 Hz .. 16 kHz
 let TARGETS = { gun: [0, -3, -11, -13, -14, -18, -20, -24, -26, -24, -24, -23, -21, -20, -19, -18, -17, -16, -16, -17, -17, -17, -18, -19, -19, -20, -23] };
-const targetTob = () => TARGETS[document.getElementById('arch').value] || TARGETS.gun;
+const targetTob = () => (document.getElementById('arch').value === 'whoosh' ? null : TARGETS[document.getElementById('arch').value] || TARGETS.gun);
 
 let P = defaults();
 const muted = new Set(), locked = new Set();
@@ -117,7 +119,7 @@ function drawTob(tob) {
   for (const db of [6, 0, -12, -24, -36, -48]) { ctx.beginPath(); ctx.moveTo(pad, Y(db)); ctx.lineTo(w, Y(db)); ctx.stroke(); ctx.fillText(db, 0, Y(db) + 3 * r); }
   [[1, '50'], [8, '250'], [14, '1k'], [20, '4k'], [26, '16k']].forEach(([i, t]) => ctx.fillText(t, X(i) - 8 * r, h - 4 * r));
   const line = (arr, col, wd) => { ctx.strokeStyle = col; ctx.lineWidth = wd * r; ctx.beginPath(); arr.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(Math.max(-48, v))) : ctx.moveTo(X(i), Y(Math.max(-48, v))))); ctx.stroke(); };
-  line(targetTob(), '#777', 1.5);
+  if (targetTob()) line(targetTob(), '#777', 1.5);
   if (refTob) line(refTob.db, getComputedStyle(document.body).getPropertyValue('--ref'), 1.5);
   if (tob) line(tob.db, getComputedStyle(document.body).getPropertyValue('--acc'), 2);
 }
@@ -158,7 +160,7 @@ function updateWav() {
   if (!last) return;
   if (wavUrl) URL.revokeObjectURL(wavUrl);
   wavUrl = URL.createObjectURL(new Blob([encodeWav(last.L, last.R, last.sr)], { type: 'audio/wav' }));
-  const a = document.getElementById('wav'), nm = engineOf(P) === 'snare' ? (document.getElementById('arch').value === 'flute' ? 'flute' : 'snare') : 'gun'; a.href = wavUrl; a.download = `${nm}_${P.seed}_${hpos + 1}.wav`; a.textContent = `${nm}.wav`;
+  const a = document.getElementById('wav'), nm = engineOf(P) === 'gun' ? 'gun' : document.getElementById('arch').value; a.href = wavUrl; a.download = `${nm}_${P.seed}_${hpos + 1}.wav`; a.textContent = `${nm}.wav`;
 }
 document.getElementById('wav').addEventListener('dragstart', (e) => {
   const a = e.currentTarget;
@@ -247,10 +249,12 @@ function buildBank() {
 }
 function refreshAll() {
   for (const s of SPEC) setParam(s.id, P[s.id], false);
-  const sn = engineOf(P) === 'snare', arch = document.getElementById('arch');
-  document.body.classList.toggle('eng-snare', sn);
-  const snFam = ['snare', 'flute'].includes(arch.value);
-  if (sn !== snFam) { arch.value = sn ? 'snare' : 'fitted'; drawTob(last?.tob); } // the family follows the loaded patch
+  const eng = engineOf(P), arch = document.getElementById('arch');
+  document.querySelectorAll('.grp[data-eng]').forEach((g) => (g.hidden = g.dataset.eng !== eng));
+  document.body.classList.toggle('eng-other', eng !== 'gun');
+  // the family follows the loaded patch
+  const famEng = { snare: 'snare', flute: 'snare', '808': '808', whoosh: 'whoosh' }[arch.value] || 'gun';
+  if (famEng !== eng) { arch.value = eng === 'gun' ? 'fitted' : eng; drawTob(last?.tob); }
 }
 
 // ---------------------------------------------------------------- history
@@ -323,7 +327,7 @@ function stemChips(ready) {
   for (const n of names) {
     const el = document.createElement('a'); el.textContent = n; el.className = ready?.[n] ? '' : 'wait';
     if (ready?.[n]) {
-      el.href = ready[n].url; el.download = `${engineOf(P) === 'snare' ? 'snare' : 'gun'}_${P.seed}_${n}.wav`; el.draggable = true;
+      el.href = ready[n].url; el.download = `${engineOf(P) === 'gun' ? 'gun' : document.getElementById('arch').value}_${P.seed}_${n}.wav`; el.draggable = true;
       el.onclick = (e) => { e.preventDefault(); playBuf(ready[n].buf, el); };
       el.ondragstart = (e) => e.dataTransfer.setData('DownloadURL', `audio/wav:${el.download}:${el.href}`);
     }

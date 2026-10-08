@@ -6,7 +6,7 @@ A browser synth for tearout guns, snares, chugs and pings. Everything renders of
 
 ## Using it
 
-- **family** picks what randomize makes: `fitted` and `gun` roll variations of guns fitted to real gun samples; `snare` rolls variations of ~150 snares fitted from a sample library; `chug` and `ping` have their own recipes.
+- **family** picks what randomize makes: `fitted` and `gun` roll variations of guns fitted to real gun samples; `snare` rolls variations of ~150 snares fitted from a sample library; `chug` and `ping` have their own recipes; `808` and `whoosh` have their own engines (808: sub, FM, noise, post; whoosh: noise through moving filters for whooshes, swishes, crashes, wind, hype loops, impacts and foley).
 - **randomize** rolls a new sound; **mutate** nudges the current one. Every group has its own **roll** and **lock**.
 - Drop a file on **+ layer** to stack a sample; drop one on **reference** to A/B it, see its tonal balance against yours, and **fit** the current engine to it.
 - Click a stem chip to solo it; drag it (or the main wav) into a DAW.
@@ -16,6 +16,8 @@ A browser synth for tearout guns, snares, chugs and pings. Everything renders of
 
 - **Gun** (`dsp/engine.js`): sub with pitch dive, noise transient, noisy/modal/FM body, synth layer, spice, samples → crunch chain (disperser, convolver, drive, OTT rack, freq shift) → mids chain with a clean sub path → reverb from synthesized IRs.
 - **Snare** (`dsp/snare.js`, `dsp/snare_spec.js`): click, tuned tone, noise with its own drive and crunchy noise types, metal, clap, room → width (symmetric, tail only) → bus with whip formant, OTT, snap and clip.
+- **808** (`dsp/e808.js`): sine sub with a fast pitch dive and slow drift, FM with its own decay, noise click → saturation (tanh/hard/fold/tube) → tone → optional clean sub below a crossover → OTT, EQ, clip.
+- **Whoosh** (`dsp/whoosh.js`): white/pink/brown/crackle/cymbal-metal source → curved amp envelope → filter sweeping start → peak → end with wobble → rhythmic chop → low body swell → symmetric width and pass-by → reverb, optional reverse → post.
 
 ## How the sounds are made
 
