@@ -1,0 +1,3 @@
+# WMeeMBw3Fqw — phhoenix music, "How to make your dubstep/riddim snares huge and fat like Oddprophet and others" (1:47)
+Source class: supplementary; no subtitles available (auto-subs failed); screen-only at 480p. No frames kept (too low-res).
+[screen] 145 BPM FL project. Kick sample and clap sample placed onset-aligned on the same beat, bounced together into one "kick clap" file, then **Fruity Fast Dist** on the bounce (threshold lowered, mix up). The riddim "fat snare" = **kick + clap fused and distorted together** (kick provides low thump, clap the noise), placed on beat 3 against crash + screech.

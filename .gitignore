@@ -1,0 +1,27 @@
+# audio, renders, fit outputs
+out/
+*.wav
+*.flac
+*.aif
+*.aiff
+*.mp3
+*.mp4
+*.asd
+# analysis data and figures (scripts stay)
+analysis/**/*.json
+analysis/**/*.npz
+analysis/**/*.pt
+analysis/**/*.png
+# copies of other people's content: transcripts, video, frames, OCR
+research/**/subs/
+research/**/txt/
+research/**/txt_excluded/
+research/**/frames/
+research/**/vid/
+research/**/ocr/
+# unused or private data
+web/vae.json
+web/snare_presets.json
+node_modules/
+.DS_Store
+__pycache__/

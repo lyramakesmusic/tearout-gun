@@ -1,0 +1,233 @@
+=== snare synthesis tutorial
+TNl6CgU6EcE | 2:03 | Au5 | 1 Minute Snare With Operator | Drum Tutorial
+1Db9rGbth_o | 17:33 | Zion Jaymes | Synthesize SNARES that sound REAL using the power of FEEDBACK
+LxV5J6UpR8Y | 9:02 | Zion Jaymes | A Follow Up to the Snare Synthesis Tutorial + Future plans
+KPgAOkpFSrs | 21:18 | Ave Mcree | Snare Synthesis Tutorial(how to create drums!)
+nglKhCUJiJY | 5:04 | Black Lotus Audio | Vital Tutorial: How To Make Snares [Free Preset]
+UXGSZfR6Ozc | 2:25 | Roland Canada TRIBES | How to Make a Snare
+1EpxRKh3V8c | 6:56 | Wildcrow Studio | EASY WAY to MAKE a SNARE in SERUM in 5 MINUTES 🔥 *Serum sound design*
+x5OPiKNA-BI | 8:02 | Stinger | Hive Audio | How To Make Custom Snares, Claps, And Rims Using Serum | Sound Design Tutorial Part 2
+suIDYns5evQ | 25:56 | thilk | Advanced Snare Synthesis Tutorial -- How I make Snares
+MuD_Rq04tic | 3:09 | dnksaus | How to Metallic Snares like SOPHIE
+hBrBE77QGLE | 8:02 | Really Useful Plugins | Max Tutorials - Drum Synthesis 2 - Snare Drum Synth
+dG_iLMBvXZs | 18:10 | Teddy Killerz | HOW TO: Snare 101 | Making Snares Using Serum & Addictive Drums | [TUTORIAL]
+=== how to synthesize a snare from scratch
+Fks15MXxwas | 8:01 | In The Mix | Make Your Own Snare Drums - Sound Design Tutorial
+tofBTvc3uT8 | 31:41 | Light Shard | How To Synthesize Snare Drums
+Vr1gEf9tpLA | 3:32 | rugosotv | How to make a Snare Drum with synthesis, 3 minute tutorial.
+1EpxRKh3V8c | 6:56 | Wildcrow Studio | EASY WAY to MAKE a SNARE in SERUM in 5 MINUTES 🔥 *Serum sound design*
+DFhFDrlYTng | 22:06 | Venus Theory | FM Snare Drum Synthesis [Sound Design // Tutorial]
+TNl6CgU6EcE | 2:03 | Au5 | 1 Minute Snare With Operator | Drum Tutorial
+hULEn2_4Unw | 22:45 | Moritz Klein | Designing a TR-808 style snare drum from scratch
+SBk3evNajg4 | 10:34 | ADSR Music Production Tutorials | Sylenth Tutorial - Make an Analog Snare Drum
+suIDYns5evQ | 25:56 | thilk | Advanced Snare Synthesis Tutorial -- How I make Snares
+uqWXV3l-QUM | 3:20 | Little Valley Outdoors | How To Make A Snare
+HjZ9JF-N_WQ | 1:51 | SageSmokeSurvival | DIY Rabbit Snare quick tip. How to make and set a rabbit snare
+11UR6of082s | 2:45 | FL Studio Basics | How To Mix A Snare Correctly (It's Very Easy..)
+=== 808 snare circuit explained
+hULEn2_4Unw | 22:45 | Moritz Klein | Designing a TR-808 style snare drum from scratch
+PNbL6s8lrdg | 2:11 | Roel Van de Paar | Electronics: 808 bass drum schematic : explanation
+yVqfu6uTJpI | 41:53 | Telefunkian | Roland TR-808 Series Part 6 : Calibrate Your 808!
+W1w44GfSBJQ | 1:40 | Perfect Circuit | Quick Tip: Snare Drum Eurorack Modular Synthesizer Patch Tutorial
+kr5wUHWIicE | 11:05 | The AudioPhool | Build Your Own 808 Kick Drum Synth!
+FFy_2zH0ngY | 8:19 | Fenix Song Music | Roland TR-808 Sound Exploration Oscilloscope via TR-6S ACB
+7bGgG9DTB1I | 1:15:53 | Telefunkian | Roland TR-808 Series Part 5 : Op Amp Rolling
+K8fUGyJicAc | 29 | ARENOT DIY | 808-Style DIY Drum Machine (Matt Sarnoff 7400 ic inspired) PURE ANALOG
+xcJSPiH6MzQ | 3:04 | Chainsaw Dagger | DIY 808 Test.  Kick, Snare, and Hi hats.
+hVNyH55XeSE | 1:11 | Chainsaw Dagger | 808 kick final PCB test
+peF3k3zsN-U | 4:36 | Elena Hidalgo Educator | Audiotool Tutorial in English. 6th. Lesson [ TR 808 Basic Functions ]
+hz8biOqIjdo | 55 | Jimmy b | TR808BD
+=== kick drum synthesis pitch envelope
+u7-40sDPxQI | 6:33 | Anthony Marinelli Music | How To Make Any Imaginable Kick Drum Sound
+H2Z3KWFawaE | 1:20 | Perfect Circuit | Quick Tip: Kick Drum Eurorack Modular Synthesizer Patch Tutorial
+ZUljw13dOms | 3:09 | Voltage Control Lab | Self-Oscillating Filter Kick Drum
+5PqoHgzFSHQ | 2:22 | HEFXTHOTH | easy VCV Rack examples for beginners using stock modules - 5. pitch envelope kick
+5tQh6xLFoEs | 15:21 | ADSR Tutorials | Creating Custom Kick Drums in FM8
+S_e_WiAijBY | 7:38 | meindispose | Kick Drum Synthesis 04 | Pigments
+vKTW-6DfNrE | 13 | George Lawler | Ableton Max for live Envelope Follower for Kick drum EQ
+8eAQ0VdW0Cw | 16:48 | Oscillator Sink | How To Kick (a discussion of kick drum synthesis)
+kB_6hgqBvoI | 11:04 | meindispose | Kick Drum Synthesis 01 | Phase Plant
+QYP2pG5NLA4 | 11:33 | Ben Radcliffe | Make INSANE EDM Kicks In Logic (Easy!)
+aitRs893ado | 3:22 | Pierce Porterfield | How ADSR & Envelopes Work
+5H8z90NVN6k | 5:25 | Michael W Ableton Tutorials | Part 4 Looping Envelopes in Operator with Ableton Live - Kick Drums
+=== 909 kick synthesis
+w3ZVGa9Epxw | 2:27 | SOUND DESIGN & SYNTHESIS | How To Make A 909 Kick Drum With Operator | Ableton Live
+0VgoOvn6Ksg | 18:17 | Pick Yourself | Get the Perfect 909 Kick Drum Sound With THIS Simple Hack
+eprNk5XQwNc | 9:45 | Billy Cosmosis | Cosmosis Studio Tips: Synthesizing a 909 style kick
+u7-40sDPxQI | 6:33 | Anthony Marinelli Music | How To Make Any Imaginable Kick Drum Sound
+0MYc37NWEvY | 5:57 | Thee HB | 909 Kick Tutorial Without Samples (The Scientific Method)
+JhZU6JGvoHw | 11:18 | In The Mix | Make Your Own Kick Drums - Punchy and Deep Kicks
+IcsihZckNQ8 | 17:54 | Matt Tinkler | Craft The PERFECT Kick with Ableton's Operator!
+0IgwdHg0ZwM | 11:06 | Underdog Electronic Music School | How to not screw up your kickdrums!
+F7D3LUCMWR4 | 12:56 | Ableton Tips by PML | Synthesize Your Own Kick Drum in Ableton Wavetable & Stock Effects
+TNl6CgU6EcE | 2:03 | Au5 | 1 Minute Snare With Operator | Drum Tutorial
+B0BAiXbCva0 | 7:31 | Zack The Foodie | Kick 1: Synthesized Distorted Hip-Hop 808 Kick Drum
+wkXiEzqE5w8 | 11:10 | musictechtuition | Voltage Modular: Creating an Analogue Kick Drum
+=== 808 bass sound design distortion
+r2U3MqMhV0k | 2:19 | TRXST I$SUES | FL Studio: 2 Minute Tips - Insane 808 Distortion
+9Ba2boGeznQ | 16:58 | In The Mix | Vital BASS Sound Design: 808s, Plucks, Growls and Sub Bass
+tv6c2YbmA84 | 4:35 | Analog Princess | underground mixing tutorial
+H6i55lXAMh0 | 17:23 | In The Mix | Bass Sound Design: 808s, Plucks, Growls and Sub Bass
+B4BgCtEVbUA | 10:01 | Ricardo Tolbert | HOW TO MIX 808'S USING SATURATION/DISTORTION | SECRET SAUCE FOR MIXNG BEATS IN FL STUDIO?!
+Z07NWhI2oQQ | 8:09 | ANDREW HUANG | How to make HUGE 808s!
+0pPK4j5BHVQ | 3:41 | InstantHowTo | How To MAKE DISTORTED 808s BandLab (QUICK & EASY) 2026
+1v_xDaJy0DQ | 10:23 | Sharpe | How To Mix Car Worthy 808's
+XbZsn8Dzu5w | 3:52 | jjukai | ethereal 808 sauce
+pk6_LFFILf8 | 8:32 | Fearless Beatz | How to make your 808's hit hard like FL Studio in Ableton
+ZmRE2JCPL-s | 12:29 | ADSR Music Production Tutorials | FM8 - Hardstyle - pt 1 - Distorted 808 Kick and Low Bass Stab - How To Tutorial
+8zSzyhyQU-I | 7:00 | Creating Tracks | How to make Dubstep - episode 7 - 808 Distortion Tutorial
+=== dubstep chug bass tutorial
+fp1xm12WPoQ | 17:42 | Wheysted Music | HOW TO MAKE THE ICONIC DUBSTEP BASS IN SERUM (FREE DL)
+uzCQ_w_BSrM | 43:15 | Wheysted Music | How to create Serum Dubstep Basses
+qXlW4NiJVDo | 44 | TEMPHIOT | HOW TO MAKE TEAROUT
+vZPdAnSjEQM | 8:32 | Wheysted Music | WOOLI'S SECRET BASS TECHNIQUE [+ BASS SOUND DESIGN TIPS]
+e48DbBAb38M | 1:51 | Distance | BASS BASICS #15 HEAVY BASS USING VITAL
+qskyWy479Ac | 12:17 | Wheysted Music | 3 DUBSTEP BASSES YOU NEED TO KNOW [SERUM TUTORIAL]
+B4vp6VSVlzc | 5:26 | Wheysted Music | HOW TO MAKE A MASSIVE GUTTERAL DUBSTEP SUSTAIN
+q25COW0_Jg8 | 8:38 | Wheysted Music | CREATING CRAZY DUBSTEP BASS FLOWS
+uJwlwphuYBs | 44:24 | Costic | Dubstep Bass Layering
+LRQFCUXqXr4 | 11:02 | oddprophet | SERUM 2: HOW TO TURN ANY SAMPLE INTO A HEAVY DUBSTEP BASS
+H8Db9I4WDyw | 18:57 | Wheysted Music | SOUL VALIENT MAKES A SERUM DUBSTEP BASS START TO FINISH
+dKvzUXcl-oA | 2:22 | SynthHacker Serum | The BEST bass trick in Serum 2!
+=== metallic percussion synthesis
+MuD_Rq04tic | 3:09 | dnksaus | How to Metallic Snares like SOPHIE
+EvTcHTCLRg0 | 4:34 | Negativist | Sound Design Metallic Friction (using Vital)
+1Db9rGbth_o | 17:33 | Zion Jaymes | Synthesize SNARES that sound REAL using the power of FEEDBACK
+DEoMeNHOVgE | 3:14 | Omri Cohen | Metallic Percussion Made Easy \ Quick Tip
+tofBTvc3uT8 | 31:41 | Light Shard | How To Synthesize Snare Drums
+YZ5c5hx5E0Q | 11:11 | superconsciousuniverse | Create Metallic HiHats with FM Synthesis in Ableton
+qTmwVEh2xgM | 10:27 | The AudioPhool | DIY Metallic Percussion Synth
+Pu7cSOqW8iM | 2:03 | Negativist | Simple Metallic Sound Design With Serum 2
+etUXq2nFUWw | 10:50 | Oxenholme | Syntakt | SY TONE Metallic Percussion Demo & Tutorial. Klang and bang!
+e37MR8eE6_I | 6:27 | Omri Cohen | Braids Synthesis Models Series - #22 Bell and Metallic Drum
+rHkbGHH1B5w | 2:24 | Benjie Jiao | DIY Synth Jam #16 - Metallic Hats
+rmTEnxR0f8I | 7:40 | Celestric | Design COOL SNARES with METALLIC SOUNDS!!! (Serum Tutorial)
+=== modal synthesis tutorial
+rCLNTaOzITc | 1:02 | Kilohearts | What is Modal Synthesis? – Sound Design Snacks 51
+4KbvMi-Sqh0 | 36:16 | Starsky Carr | MODAL COBALT8: review, demo walkthrough and tutorial
+QeuImSnEFuo | 46:54 | loopop | Modal ARGON8: Review and full workflow tutorial // wavetable synthesis explained
+C3a55XjLptM | 10:47 | Sounds Good Channel | Physical Modelling Synthesis | Explanation and Tutorial
+0i1LCrC7dZw | 21:43 | Dash Glitch | Modal synthesis In Phase Plant | Sound Design Tutorial
+9rGOFCIA1-E | 20:21 | Red Means Recording | Getting to Know Mutable Instruments Elements (Modal Synthesis)
+QMqanxfsk9k | 6:58 | 9b0 | Modal synthesis made quick and easy
+RdoGlKOvzKk | 8:20 | GAMMA UMD | Example-guided Physically-based Modal Sound Synthesis
+0cY_XiwPb0U | 20:50 | platipo | Modal Synthesis: Zebra 3 vs. Pigments Comparison
+wS01LY3aDhM | 7:49 | Todd Barton | 1979 Modal Synthesis Voice walkthrough
+xId8O7qUbNQ | 9:58 | zirconst | Unlocking another modal synthesis engine in Arturia Pigments
+qXcllJhro_I | 51:19 | mylarmelodies | Every type of analog synthesis explained using the SAME 4 modules
+=== how to make a snare in serum
+1EpxRKh3V8c | 6:56 | Wildcrow Studio | EASY WAY to MAKE a SNARE in SERUM in 5 MINUTES 🔥 *Serum sound design*
+x5OPiKNA-BI | 8:02 | Stinger | Hive Audio | How To Make Custom Snares, Claps, And Rims Using Serum | Sound Design Tutorial Part 2
+1Db9rGbth_o | 17:33 | Zion Jaymes | Synthesize SNARES that sound REAL using the power of FEEDBACK
+IkkT48T-fBQ | 9:56 | DNB Academy | How to Make a Hard DNB Snare in Serum 2
+pzxGMhXMt9s | 21:43 | Zens | How I Make & Design Trap Snares from Scratch! | Drum Synthesis (Part 1)
+SJnd_ZzW5IQ | 6:51 | Vienn | How to make metallic snare in Serum 2
+u6_gYQC7C9M | 11:53 | DNB Academy | Serum 2 Snare Design & Processing Using the NEW Bus System
+TNl6CgU6EcE | 2:03 | Au5 | 1 Minute Snare With Operator | Drum Tutorial
+WFGs91vSpIw | 9:16 | disphing | the only drum sound design tutorial you'll ever need*
+Fks15MXxwas | 8:01 | In The Mix | Make Your Own Snare Drums - Sound Design Tutorial
+dG_iLMBvXZs | 18:10 | Teddy Killerz | HOW TO: Snare 101 | Making Snares Using Serum & Addictive Drums | [TUTORIAL]
+jHb7P2DSZHg | 12:02 | Freshly Squeezed Samples | How to Create A Snare In Serum From Scratch
+=== phase plant snare
+slmUC5JqzsE | 14:41 | dBs Institute | Sound design INFINITE snares quickly in Phase Plant with DC Breaks
+EZV6Ignx_mI | 7:23 | KelSounds | Phase Plant Drum Synthesis Series (The Snare)
+fzFSm4frIio | 25:56 | Astrobear Music | Making drums like Noisia with Phase Plant
+JzKzfREWDbA | 23:37 | Ghosthack | Phase Plant Overview + Snare Design Tutorial!
+_h8bQnRhrxk | 12:08 | KelSounds | Making a Snare inside of Phase Plant
+kR1VmUChcjE | 19:59 | Nanospiral | How to make DRUMS with Phase Plant
+lDfT2a0ogdM | 4:34 | KelSounds | Phase Plant 808 Snare
+M3y-AHFu7CI | 7:53 | DNB Academy | Future DNB SNARE SYNTHESIS Tutorial With MAT ZO | Phase Plant Tutorial
+96LIhr48qEo | 53:50 | samuraiowl | making a snare and kick in phase plant
+mVNeAgzCwU0 | 26:30 | AltBrakz | Synthesizing Snare Drums with Phase Plant and Yum Audio & Mr. Bill's Slap
+RxhExqwrUm0 | 11:35 | Kilohearts | Subtractive Snare – Synth Styles with Lillian Frances – Ep.3
+fIZHjnAlKW8 | 17:07 | Art1fact | Designing a KILLER SNARE in Phase Plant - FREE PRESET
+=== tearout dubstep gun sound design
+qXlW4NiJVDo | 44 | TEMPHIOT | HOW TO MAKE TEAROUT
+YvEIKc2Eg9Q | 17:18 | oddprophet | HOW TO TURN ANY SNARE INTO A TEAROUT GUN
+fJZYQPGFXB4 | 13:06 | DRIZKO | How To Make a TEAROUT DUBSTEP DROP (Tearout Gun Sound Design & Screech Tutorial)
+xtaeEvROUFw | 11:57 | DPS AUDIO | MAKING THE HEAVIEST TEAROUT GUN (sound like NIMDA, yvm3)
+nApsgDWSQ7Y | 11:16 | MOONBOY | HOW TO TEAROUT DUBSTEP (Marauda, Kai Wachi, Excision)
+BDt1alVPtN0 | 25 | CROWN | hardest switch to tearout you'll hear all week
+ODdHap_SYM0 | 6:06 | Ghosthack | How to Create a Tearout/Dubstep Gun Sound!
+OwQDpCtbNTM | 16:41 | oddprophet | I Made A 1-2-3 Method For Dubstep Sound Design… It Works Every Time
+-l4jY9vKf1o | 1:49 | AYJINPLATES | How to Make TEAROUT Dubstep in 2 Minutes
+S4kxr2NmnS4 | 18 | Spy Nasaurus | TEAROUT DUBSTEP Bass Noises... with HARMOR / SerumFX / kHs Frequency Shifter / CamelCrusher
+LRQFCUXqXr4 | 11:02 | oddprophet | SERUM 2: HOW TO TURN ANY SAMPLE INTO A HEAVY DUBSTEP BASS
+f_lewO1mX48 | 2:01 | EMPERATRES | TEAROUT/DUBSTEP SOUND DESIGN | EDM TUTORIAL | SUB
+=== dubstep chug sound design
+fp1xm12WPoQ | 17:42 | Wheysted Music | HOW TO MAKE THE ICONIC DUBSTEP BASS IN SERUM (FREE DL)
+3KtaTBKGIh4 | 16:04 | oddprophet | Gimmie 16 minutes and you'll make insane dubstep basses in SERUM 2 using this spectral manual mode
+PiYJW38je1o | 12:31 | Wheysted Music | How to SUBSIDIA DUBSTEP like EXCISION In 2023
+LRQFCUXqXr4 | 11:02 | oddprophet | SERUM 2: HOW TO TURN ANY SAMPLE INTO A HEAVY DUBSTEP BASS
+qXlW4NiJVDo | 44 | TEMPHIOT | HOW TO MAKE TEAROUT
+xy_NbX2SNSc | 9:59 | Dripment | 2 EASY Serum 2 BASS ROUTINES EVERY BEGINNER Should Know
+vZPdAnSjEQM | 8:32 | Wheysted Music | WOOLI'S SECRET BASS TECHNIQUE [+ BASS SOUND DESIGN TIPS]
+NQqOWzRXjjA | 19:40 | Bunting | SQUELCHY ALIEN Basses like Tipper and Resonant Language (Vital Sound Design Tutorial)
+kwsg_TBNHQg | 28:43 | Inverse Audio | How to Make EVERY SOUND in DRUM & BASS - SERUM (COMPLETE GUIDE) FL Studio 21
+H8Db9I4WDyw | 18:57 | Wheysted Music | SOUL VALIENT MAKES A SERUM DUBSTEP BASS START TO FINISH
+=== riddim chug bass serum
+fp1xm12WPoQ | 17:42 | Wheysted Music | HOW TO MAKE THE ICONIC DUBSTEP BASS IN SERUM (FREE DL)
+LRQFCUXqXr4 | 11:02 | oddprophet | SERUM 2: HOW TO TURN ANY SAMPLE INTO A HEAVY DUBSTEP BASS
+xy_NbX2SNSc | 9:59 | Dripment | 2 EASY Serum 2 BASS ROUTINES EVERY BEGINNER Should Know
+3KtaTBKGIh4 | 16:04 | oddprophet | Gimmie 16 minutes and you'll make insane dubstep basses in SERUM 2 using this spectral manual mode
+qskyWy479Ac | 12:17 | Wheysted Music | 3 DUBSTEP BASSES YOU NEED TO KNOW [SERUM TUTORIAL]
+uzCQ_w_BSrM | 43:15 | Wheysted Music | How to create Serum Dubstep Basses
+SibQOU0hInA | 12:06 | BRAINWAVEZ | How to Make Distorted Basses like STVSH (Serum 2 Tutorial)
+dKvzUXcl-oA | 2:22 | SynthHacker Serum | The BEST bass trick in Serum 2!
+H8Db9I4WDyw | 18:57 | Wheysted Music | SOUL VALIENT MAKES A SERUM DUBSTEP BASS START TO FINISH
+ibdbe1nxAhs | 9:23 | Bunting | GNARLY Tearout / Riddim Basses in Vital (Marauda, SVDDEN DEATH, Never Say Die, etc.)
+=== 808 glide tutorial portamento
+S1PkHMA0cYo | 5:03 | Akito | How to make an 808 GLIDE & PITCH BEND in SERUM (Sound Design Tutorial)
+JTiZbcaGhjM | 2:45 | SLYZEXX_MUSIC | HOW TO PORTAMENTO\SLIDE 808 BASS IN FL STUDIO 20
+NgtVA6m-uQE | 9:09 | Marrcello | MPC ONE - SECRET Portamento/Glide Function REVEALED!! / Standalone!
+2vq5kt12ieQ | 6:57 | JON THE DREAMER | 808 Slides & Glides in Ableton Live 10
+eSBL0QcNgpQ | 57 | The Broke Producer | How to 808 Glide/Slide in Ableton Live 12
+FVsC90UwPQo | 7:17 | Christopher Marlowe Production | NEW METHOD For Gliding 808 Basses in Reaper - ReaSamplOmatic5000's New Portamento Function
+PEhq15npvBw | 7:59 | soundsbysev | How to make your 808's Glide/Slide in Ableton Live 9.6 using Sampler
+pgQP9XPn0NI | 9:51 | the_design_coop | Portamento Effect in Logic Pro X (Smooth Synth Glides!)- what it is, and how to do it
+I1S9pb8N75s | 8:57 | Mr. DeeKay TV | 808 Glides on MPC Standalone
+AGbxz9D5ZNY | 7:08 | MrDifferentTV | How to Glide/Slide your 808 in FL Studio 2016
+=== tr-808 cowbell cymbal circuit explained
+Uf9oTCIQgXg | 32 | Synth Dev | Someone asked for more cowbell?
+x-G5MUKNOy4 | 4:46 | Frisnit | Roland TR-808 cowbell rebuild
+uriPPJnfpFw | 38 | Circuit Ben | 808 Cowbell Morse Code
+O8auXeITiIY | 3:29 | MFPRODUCTIONSCHANNEL | Classic drum machines and evolution of cowbell sound - Roland TR 808, TR 707, CR 8000, Linndrum
+An1fr4MLj3Y | 33 | init 0 | "Blasphemy" 808 cowbell with 555
+KC7UaUD5rEA | 7:04 | Doctor Mix | The Roland TR-808 In Action
+isn-JwEu_-8 | 57 | Koffeinsuechtig | bridged T-network
+A_Bv5Ad-Cy8 | 5:41 | HAGIWO | [ $5 ] DIY eurorack modular synth KICK (Roland TR-808/909 drum machine type) with arduino
+OpvJJ0_WA1s | 2:02:28 | Moritz Klein | Reverse Engineering... with @SimonTheMagpie  | Roland TR-808
+eM03VGK4snM | 6 | HQ Sampling Library - Topic | TR 808 Cymbal 3
+=== how to make chugs dubstep
+H8Db9I4WDyw | 18:57 | Wheysted Music | SOUL VALIENT MAKES A SERUM DUBSTEP BASS START TO FINISH
+fp1xm12WPoQ | 17:42 | Wheysted Music | HOW TO MAKE THE ICONIC DUBSTEP BASS IN SERUM (FREE DL)
+PiYJW38je1o | 12:31 | Wheysted Music | How to SUBSIDIA DUBSTEP like EXCISION In 2023
+uzCQ_w_BSrM | 43:15 | Wheysted Music | How to create Serum Dubstep Basses
+plzsHeli29Y | 14:24 | Wheysted Music | THIS INSANE METHOD TO FINISH DUBSTEP DROPS 5x FASTER (Not Clickbait)
+3KtaTBKGIh4 | 16:04 | oddprophet | Gimmie 16 minutes and you'll make insane dubstep basses in SERUM 2 using this spectral manual mode
+LRQFCUXqXr4 | 11:02 | oddprophet | SERUM 2: HOW TO TURN ANY SAMPLE INTO A HEAVY DUBSTEP BASS
+q25COW0_Jg8 | 8:38 | Wheysted Music | CREATING CRAZY DUBSTEP BASS FLOWS
+Op1nyQxm540 | 8:16 | Wheysted Music | HOW TO GET CLEAN DISTORTED DUBSTEP BASSES
+sAGbM1AMnns | 2:46 | Dubstep uNk | Chunk Up The Deuce (Hairitage Remix)
+=== deathstep chug tutorial
+WjD7kb4yf1k | 21:05 | Defyre Society | How to Deathstep with Code:Pandorum - Deathstep Random Sample Challenge (PRESETS/FLP)
+1k4N5kiQINE | 4:55 | Defyre Society | Deathstep Machine Gun - Machine Gun Deathstep like Code: Pandorum, Sadhu, Marauda (FREE FLP/PRESET)
+fp1xm12WPoQ | 17:42 | Wheysted Music | HOW TO MAKE THE ICONIC DUBSTEP BASS IN SERUM (FREE DL)
+tfKCNtxgN9A | 2:06 | Deformed Elephant Surgery | Deformed Elephant Surgery - Chug Chug Wub Wub (old version)
+MYfxGhW9KQo | 53:42 | Dripment | How to HEAVY Dubstep - A 2nd DROP!! (FLOW State, livestream, TIPS)
+qiynmBoTMKY | 3:22 | Ethan Keely | Sketched - Sonic DeathStep (Dubstep)
+3KtaTBKGIh4 | 16:04 | oddprophet | Gimmie 16 minutes and you'll make insane dubstep basses in SERUM 2 using this spectral manual mode
+q25COW0_Jg8 | 8:38 | Wheysted Music | CREATING CRAZY DUBSTEP BASS FLOWS
+jzYpi_Msk6k | 11 | Dinesh Veliath | 8 string technical death metal : Chugs with Carpet Rolls
+xdKwm0T9yEI | 9:55 | Wheysted Music | THE SECRET FOR CRUNCHY DUBSTEP BASSES
+=== 808 sound design from scratch pitch envelope distortion clipping
+1oUOfCraa6g | 8:15 | Simon Hutchinson | Clamping VCA in Reaktor 6 Primary with "Mod. Clipper" (TR-808-style envelope) | Simon Hutchinson
+avI45GRDoEg | 10:28 | 3abundio | seri beats | How to Create HARD DELAYED 808s like the Pluggz & Zaytoven + Pierre Bourne (808 Layering Technique)
+e348tORaYQA | 2:49 | RIPPLES MUSIC | Design Your Own Kick From Scratch | Bedrock by RIPPLES
+3voBXVSnXr0 | 4:58 | SonicDriveMedia | NI Massive Tutorial OSC Tab- Glide Pitchbend Vibrato Internal Envelope osillator phases How to
+veavIZQhimQ | 2:31 | peff | DIY 808 Bass Drum circuit with Pitch CV modulation
+1JGyAzPG4-E | 15:48 | Simon Hutchinson | Pure Data Clamping VCA with [clip~] (TR-808-style Envelope in Pd Vanilla) | Simon Hutchinson
+3HglKaJ5HM0 | 9:44 | PAVMusicProduction | Fix 808 Kick Over Looping & Sounding Distorted in FL Studio
+a-G0zYRcgck | 11:54 | Zombie Fights Shark | Ableton Operator Complete Walkthrough - The Pitch Envelope - TOO MANY PLUG-INS: EP. 5, PT. 5
+9_SewaGK88I | 6:01 | Computer Music | Crafting a custom kick from separate envelope sections
+-IDkQQv_zzs | 4:32 | Ben Tenn | MPC BASS GLIDE REFRESHER
