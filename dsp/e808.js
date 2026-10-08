@@ -7,7 +7,7 @@ function subVoice(p, n, sr) {
   let ph = 0, prev = 0;
   for (let i = 0; i < n; i++) {
     const t = i / sr;
-    const st = base + p.e8_s_dive * Math.exp(-t / td) + p.e8_s_drift * (1 - Math.exp(-t / tr)) + p.e8_n_click * Math.exp(-t / tc);
+    const st = base + p.e8_s_dive * Math.exp(-t / td) + p.e8_s_drift * Math.exp(-t / tr) + p.e8_n_click * Math.exp(-t / tc);
     ph += Math.min(midiHz(st), sr * 0.45) / sr; if (ph >= 1) ph -= 1;
     const I = p.e8_f_amt * (p.e8_f_sustain + (1 - p.e8_f_sustain) * Math.exp(-t / fd));
     const m = I > 1e-4 ? I * Math.sin(TAU * ph * p.e8_f_ratio + p.e8_f_fb * 2 * prev) : 0;

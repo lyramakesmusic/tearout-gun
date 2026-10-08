@@ -8,3 +8,5 @@ Source: transcript.
 - Chain: Neve 1073 pre (slight drive) → API 550: **+6 dB @ 10 kHz, +2 dB @ 30 Hz, −2 dB @ 200 Hz** → 1176 **4:1, ~3 dB GR, medium-fast attack** (let transient through) → Pro-MB: **sub −3 dB, ~200 Hz −3..−4 dB, + highs** → Massive Passive **+8 dB @ 3.9 kHz, −3 dB @ 390 Hz** → limiter (Elevate) always on during design. (S)
 - Kick/808 interaction: no sidechain; **fade the sub in after each kick with an exponential fade-in mirroring the kick's log decay**. (S)
 - Length: club kick ≤ 1/8 note; 808 version long. (S)
+
+On-screen (frames 2:20–5:50, 360p): modulator operator **E ratio set to 1.0000, then changed to 2.0000** (OS) while dialing the pop; E's amp envelope is a near-vertical spike (a few ms, OS). Pitch-envelope graph: fast drop with a strongly bowed exponential segment back to 0 (OS). Noise op X with saturator, envelope a short block (OS).

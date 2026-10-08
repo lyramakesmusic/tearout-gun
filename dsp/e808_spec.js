@@ -2,14 +2,14 @@
 const S = (g, id, label, min, max, def, scale = 'lin', unit = '', extra = {}) => ({ id, g, label, min, max, def, scale, unit, eng: '808', ...extra });
 
 export const E808_SPEC = [
-  // SUB — sine on the note, with a fast dive into it and a slow drift after
+  // SUB — sine on the note; pitch lands on it in two stages: a fast dive, then a slow tail settling onto the root
   S('e8_sub', 'e8_s_lvl', 'level', -60, 6, 0, 'lin', 'dB'),
   S('e8_sub', 'e8_s_oct', 'octave', -1, 1, 0, 'int'),
   S('e8_sub', 'e8_s_tune', 'tune', -12, 12, 0, 'lin', 'st'),
   S('e8_sub', 'e8_s_dive', 'pitch dive', 0, 36, 16, 'lin', 'st'),
   S('e8_sub', 'e8_s_dive_ms', 'dive time', 2, 120, 14, 'log', 'ms'),
-  S('e8_sub', 'e8_s_drift', 'drift', -4, 4, -1.6, 'lin', 'st'),
-  S('e8_sub', 'e8_s_drift_ms', 'drift time', 50, 1500, 350, 'log', 'ms'),
+  S('e8_sub', 'e8_s_drift', 'tail', 0, 6, 1.6, 'lin', 'st'),
+  S('e8_sub', 'e8_s_drift_ms', 'tail time', 30, 1500, 180, 'log', 'ms'),
   S('e8_sub', 'e8_s_shape', 'triangle', 0, 1, 0),
   S('e8_sub', 'e8_s_att', 'attack', 0, 20, 0, 'lin', 'ms'),
   S('e8_sub', 'e8_s_hold', 'hold', 1, 1500, 120, 'log', 'ms'),

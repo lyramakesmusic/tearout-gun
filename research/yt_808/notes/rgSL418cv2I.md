@@ -8,3 +8,5 @@ Source: transcript only (S = said). No on-screen numbers available.
 - Post: light limiter at end always; tuner check after FX. Saturator/Decapitator light drive; iZotope Trash for harsh; **downsampling/bitcrush (Decimort)** as pseudo-noise HF layer; Erosion; RC-20 noise; **cabinet/amp sims**. (S)
 - Clean sub vs harmonics: **frequency split** in a rack (LP/HP bands), process only the top band; Ozone Imager as transparent splitter. (S)
 - Warning: lo-fi plugins can add pitch drift / low-end loss. (S)
+
+On-screen (frames 1:25–2:55): osc A **square (Basic Shapes), oct −2**, filter **MG Low 24**; ENV1 **A 0.5 ms, H 0, D 1.00 s, S 0.0 dB, R 115 ms** (full sustain, short release = gate); LFO1 envelope mode, rate "bar", exponential-decay shape; **Matrix LFO1 → Mast.Tun amount 68** (OS; Serum's master-tune semitone span not shown).
