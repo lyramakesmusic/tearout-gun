@@ -2,19 +2,20 @@ import { SPEC, SPEC_BY_ID, defaults, toNorm, fromNorm, encodeWav, stemLayers, en
 import { SNARE_GROUPS, SNARE_LEVEL } from '../dsp/snare_spec.js';
 import { E808_GROUPS, E808_LEVEL } from '../dsp/e808_spec.js';
 import { WHOOSH_GROUPS, WHOOSH_LEVEL } from '../dsp/whoosh_spec.js';
+import { ATMOS_GROUPS, ATMOS_LEVEL } from '../dsp/atmos_spec.js';
 import { randomize, mutate } from '../dsp/random.js';
 import { rollArchetype } from '../dsp/archetypes.js';
 import { decodeCV } from '../dsp/cvae.js';
 
 const GROUPS = [
   ['sub', 'sub'], ['tr', 'transient'], ['body', 'body'], ['synth', 'synth'], ['spice', 'spice'],
-  ...SNARE_GROUPS, ...E808_GROUPS, ...WHOOSH_GROUPS,
+  ...SNARE_GROUPS, ...E808_GROUPS, ...WHOOSH_GROUPS, ...ATMOS_GROUPS,
   ['sample1', 'sample 1'], ['sample2', 'sample 2'], ['sample3', 'sample 3'], ['crunch', 'crunch'], ['rev', 'reverb'], ['master', 'master'], ['burst', 'burst'], ['global', 'global'],
 ];
-const LEVEL = { sample1: 's1_lvl', sample2: 's2_lvl', sample3: 's3_lvl', sub: 'sub_lvl', tr: 'tr_lvl', body: 'body_lvl', synth: 'syn_lvl', spice: 'spice_lvl', rev: 'rev_lvl', crunch: 'cr_mix', ...SNARE_LEVEL, ...E808_LEVEL, ...WHOOSH_LEVEL };
+const LEVEL = { sample1: 's1_lvl', sample2: 's2_lvl', sample3: 's3_lvl', sub: 'sub_lvl', tr: 'tr_lvl', body: 'body_lvl', synth: 'syn_lvl', spice: 'spice_lvl', rev: 'rev_lvl', crunch: 'cr_mix', ...SNARE_LEVEL, ...E808_LEVEL, ...WHOOSH_LEVEL, ...ATMOS_LEVEL };
 // per-family target 1/3-octave balance (median of the references), dB re loudest band, 39 Hz .. 16 kHz
 let TARGETS = { gun: [0, -3, -11, -13, -14, -18, -20, -24, -26, -24, -24, -23, -21, -20, -19, -18, -17, -16, -16, -17, -17, -17, -18, -19, -19, -20, -23] };
-const targetTob = () => (document.getElementById('arch').value === 'whoosh' ? null : TARGETS[document.getElementById('arch').value] || TARGETS.gun);
+const targetTob = () => (['whoosh', 'atmos'].includes(document.getElementById('arch').value) ? null : TARGETS[document.getElementById('arch').value] || TARGETS.gun);
 
 let P = defaults();
 const muted = new Set(), locked = new Set();
@@ -253,7 +254,7 @@ function refreshAll() {
   document.querySelectorAll('.grp[data-eng]').forEach((g) => (g.hidden = g.dataset.eng !== eng));
   document.body.classList.toggle('eng-other', eng !== 'gun');
   // the family follows the loaded patch
-  const famEng = { snare: 'snare', flute: 'snare', '808': '808', whoosh: 'whoosh' }[arch.value] || 'gun';
+  const famEng = { snare: 'snare', flute: 'snare', '808': '808', whoosh: 'whoosh', atmos: 'atmos' }[arch.value] || 'gun';
   if (famEng !== eng) { arch.value = eng === 'gun' ? 'fitted' : eng; drawTob(last?.tob); }
 }
 
@@ -277,7 +278,7 @@ function applyRolled(Q, mode) {
   if (pendingGroupRoll) { pendingGroupRoll.textContent = 'roll'; pendingGroupRoll = null; }
   const isMut = mode === 'mutate', b = document.getElementById(isMut ? 'mut' : 'rand');
   b.disabled = false; if (!isMut) b.textContent = 'randomize';
-  P = { ...Q, ...sampleParams() }; refreshAll(); commit(isMut); request(true);
+  P = { ...Q, ...sampleParams() }; presetSel.value = ''; document.getElementById('del').hidden = true; refreshAll(); commit(isMut); request(true);
 }
 // best-of-K split across a small pool of workers: each scores two candidates, the best one wins
 const POOL = Array.from({ length: Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 2)) }, () => new Worker('worker.js', { type: 'module' }));
@@ -442,7 +443,7 @@ function showLayers() {
 
 // ---------------------------------------------------------------- boot
 // families that only show when running locally (works in progress)
-const LOCAL = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname), LOCAL_ONLY = ['chug'];
+const LOCAL = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname), LOCAL_ONLY = ['chug', 'atmos'];
 if (!LOCAL) for (const o of [...document.querySelectorAll('#arch option')]) if (LOCAL_ONLY.includes(o.value)) o.remove();
 buildBank(); renderSaved();
 loadJSON('priors.json').then((j) => (priors = j));

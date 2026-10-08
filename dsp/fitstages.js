@@ -11,7 +11,7 @@ export function prepTarget(x) {
   let last = 0; e.forEach((v, k) => { if (v > top - 45) last = k; });
   return { x: t, lenMs: Math.round(((last + 1) * h * 1000) / SR) + 30 };
 }
-function shellPitch(x) {
+export function shellPitch(x) {
   const N = 8192, re = new Float64Array(N), im = new Float64Array(N), a = Math.floor(0.01 * SR), b = Math.min(x.length, Math.floor(0.04 * SR));
   for (let i = a; i < b; i++) re[i - a] = x[i] * (0.5 - 0.5 * Math.cos((2 * Math.PI * (i - a)) / (b - a)));
   fft(re, im, false);

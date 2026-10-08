@@ -5,7 +5,7 @@ import { randomize, mutate } from './random.js';
 import { features, gunScore } from './gunness.js';
 import { engineOf, lr4 } from './engine.js';
 import { rollSnareFlavor, rollSnareAnchored } from './snare_roll.js';
-import { roll808, rollWhoosh } from './flavors.js';
+import { roll808, rollWhoosh, rollAtmos } from './flavors.js';
 
 // energy after 500 ms relative to the whole hit, dB
 function lateDb(o) {
@@ -34,7 +34,7 @@ export function chugify(Q, r = Math.random) {
 }
 // families with their own reference (from real samples) are scored against it; everything else against guns
 export function roll(mode, P, { priors, ref, famRefs = null, famFits = null, locked = new Set(), k = 5, r = Math.random, withScore = false } = {}) {
-  ref = famRefs?.[mode] || (['flute', '808', 'whoosh'].includes(mode) ? null : ref);
+  ref = famRefs?.[mode] || (['flute', '808', 'whoosh', 'atmos'].includes(mode) ? null : ref);
   const anchors = famFits?.[mode];
   let best = null;
   const limit = mode === 'mutate' ? Math.max(-25, lateDb(render({ ...P, b_shots: 1 })) + 3) : Infinity;
@@ -44,6 +44,7 @@ export function roll(mode, P, { priors, ref, famRefs = null, famFits = null, loc
       : mode === 'flute' ? rollSnareFlavor(P, r, locked, 'flute')
       : mode === '808' ? roll808(P, r, locked)
       : mode === 'whoosh' ? rollWhoosh(P, r, locked)
+      : mode === 'atmos' ? rollAtmos(P, r, locked)
       : mode === 'snare' ? (famFits?.snare_eng?.length && r() < 0.75 ? rollSnareAnchored(P, famFits.snare_eng, r, locked) : rollSnareFlavor(P, r, locked))
       : mode === 'fitted' ? randomize(P, priors, locked, r)
       : anchors?.length && mode !== 'snare' ? balance(randomize(P, { guns: anchors, keepSpice: true }, locked, r), locked, TARGETS[mode])

@@ -7,6 +7,8 @@ import { E808_SPEC, E808_STEMS } from './e808_spec.js';
 import { render808 } from './e808.js';
 import { WHOOSH_SPEC, WHOOSH_STEMS } from './whoosh_spec.js';
 import { renderWhoosh } from './whoosh.js';
+import { ATMOS_SPEC, ATMOS_STEMS } from './atmos_spec.js';
+import { renderAtmos } from './atmos.js';
 
 export const SR = 48000;
 
@@ -231,14 +233,15 @@ export const SPEC = [
   { id: 'b_drift', g: 'burst', label: 'pitch drift', min: -4, max: 4, def: 0, unit: 'st/shot', fit: false },
   { id: 'b_jitter', g: 'burst', label: 'variation', min: 0, max: 1, def: 0.3, fit: false },
   { id: 'b_gate', g: 'burst', label: 'chop', min: 0.2, max: 1, def: 0.9, fit: false },
-  // which engine renders the patch: 0 gun, 1 snare, 2 808, 3 whoosh
-  { id: 'engine', g: 'meta', label: 'engine', min: 0, max: 3, def: 0, scale: 'int', fit: false },
+  // which engine renders the patch: 0 gun, 1 snare, 2 808, 3 whoosh, 4 atmosphere
+  { id: 'engine', g: 'meta', label: 'engine', min: 0, max: 4, def: 0, scale: 'int', fit: false },
   ...SNARE_SPEC,
   ...E808_SPEC,
   ...WHOOSH_SPEC,
+  ...ATMOS_SPEC,
 ];
 // params that belong to the patch's engine (plus the shared globals)
-export const ENGINES = ['gun', 'snare', '808', 'whoosh'];
+export const ENGINES = ['gun', 'snare', '808', 'whoosh', 'atmos'];
 export const engineOf = (p) => ENGINES[Math.round(p?.engine || 0)] || 'gun';
 export const inEngine = (s, eng) => s.g === 'global' || s.g.startsWith('sample') || (s.eng || 'gun') === eng;
 
@@ -981,6 +984,7 @@ function renderRaw(params, opts = {}) {
   const sr = opts.sr || SR;
   if (engineOf(p) === '808') return render808(p, { ...opts, sr });
   if (engineOf(p) === 'whoosh') return renderWhoosh(p, { ...opts, sr });
+  if (engineOf(p) === 'atmos') return renderAtmos(p, { ...opts, sr });
   if (engineOf(p) === 'snare') {
     const n = Math.floor((p.len * sr) / 1000), extra = {};
     for (const k of [1, 2, 3]) if (p[`s${k}_lvl`] > -59 && SAMPLES[k]) extra['smp' + k] = renderSample(p, k, n, sr);
@@ -1046,7 +1050,7 @@ export function encodeWav(L, R, sr) {
 
 // Stems: each layer soloed through the chain at the full mix's gains, so relative levels hold.
 export const STEM_LAYERS = [['sub', 'sub_lvl'], ['transient', 'tr_lvl'], ['body', 'body_lvl'], ['synth', 'syn_lvl'], ['spice', 'spice_lvl'], ['sample 1', 's1_lvl'], ['sample 2', 's2_lvl'], ['sample 3', 's3_lvl'], ['reverb', 'rev_lvl']];
-export const stemLayers = (p) => ({ snare: [...SNARE_STEMS, ['sample 1', 's1_lvl'], ['sample 2', 's2_lvl'], ['sample 3', 's3_lvl']], '808': E808_STEMS, whoosh: WHOOSH_STEMS }[engineOf(p)] || STEM_LAYERS);
+export const stemLayers = (p) => ({ snare: [...SNARE_STEMS, ['sample 1', 's1_lvl'], ['sample 2', 's2_lvl'], ['sample 3', 's3_lvl']], '808': E808_STEMS, whoosh: WHOOSH_STEMS, atmos: ATMOS_STEMS }[engineOf(p)] || STEM_LAYERS);
 export function renderStems(params, full = null) {
   const p = { ...defaults(), ...params };
   full = full || render(p);

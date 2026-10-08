@@ -41,4 +41,16 @@ export const WHOOSH_FLAVORS = {
 };
 // punch whooshes and swishes come up most often
 const WHOOSH_WEIGHTS = ['whoosh', 'whoosh', 'whoosh', 'swish', 'swish', 'crash', 'reverse crash', 'wind', 'hype loop', 'impact', 'foley'];
+// atmospheres: every flavor routes its sources through resonance, movement and space
+const ATOFF = { at_b_lvl: -60, at_d_lvl: -60, at_n_lvl: -60, at_c_lvl: -60, at_s_lvl: -60, at_g_lvl: -60 };
+export const ATMOS_FLAVORS = {
+  room: { base: { ...ATOFF, at_b_lvl: 0 }, vary: { at_len: [3000, 7000], at_b_color: [-0.8, 0.2], at_b_formants: [2, 5], at_b_freq: [300, 2500], at_b_q: [3, 14], at_move: [0.2, 0.6], at_speed: [0.05, 0.3], at_x_rev: [-8, 0], at_x_size: [2000, 6000], at_p_hp: [80, 400], at_p_lp: [5000, 12000], at_x_phaser: [0, 0.4] } },
+  'crunch air': { base: { ...ATOFF, at_c_lvl: 0, at_b_lvl: -10 }, vary: { at_len: [2500, 6000], at_c_rate: [1500, 9000], at_c_bits: [3, 7], at_c_drive: [8, 24], at_c_hp: [2500, 8000], at_c_grit: [0.1, 0.7], at_b_freq: [3000, 8000], at_x_rev: [-12, -4], at_x_size: [1000, 3500], at_p_hp: [1500, 4000], at_x_width: [0.7, 1] } },
+  spaceship: { base: { ...ATOFF, at_s_lvl: 0, at_b_lvl: -12 }, vary: { at_len: [3500, 8000], at_s_hum: [30, 120], at_s_ring: [0, 400], at_s_comb: [200, 1500], at_s_sweep: [0.5, 2.5], at_s_wobble: [0.1, 1], at_move: [0.4, 0.9], at_speed: [0.05, 0.4], at_x_flanger: [0, 0.7], at_x_phaser: [0, 0.6], at_x_rev: [-10, -2], at_x_size: [2000, 6000], at_p_hp: [25, 60] } },
+  'noise bass': { base: { ...ATOFF, at_n_lvl: 0, at_b_lvl: -14 }, vary: { at_len: [2500, 6000], at_n_oct: [0, 1], at_n_fb: [0.85, 0.98], at_n_sub: [-24, -6], at_n_drive: [4, 18], at_n_lp: [300, 2500], at_b_freq: [150, 800], at_move: [0.2, 0.6], at_x_rev: [-18, -8], at_x_size: [800, 2500], at_p_hp: [25, 50], at_x_width: [0.3, 0.7] } },
+  drone: { base: { ...ATOFF, at_d_lvl: 0, at_b_lvl: -14 }, vary: { at_len: [4000, 9000], at_d_wave: [0, 2], at_d_oct: [-1, 1], at_d_chord: [0, 5], at_d_voices: [3, 7], at_d_detune: [8, 35], at_d_cut: [300, 3000], at_d_res: [0.1, 0.6], at_move: [0.3, 0.8], at_speed: [0.05, 0.3], at_x_phaser: [0, 0.6], at_x_rev: [-8, 0], at_x_size: [3000, 7000] } },
+  shimmer: { base: { ...ATOFF, at_g_lvl: 0, at_b_lvl: -10 }, vary: { at_len: [3000, 8000], at_g_density: [4, 40], at_g_oct: [5, 7], at_g_spread: [0.5, 2.5], at_g_len: [20, 200], at_b_freq: [3000, 9000], at_b_q: [4, 20], at_x_rev: [-2, 4], at_x_size: [3000, 8000], at_p_hp: [300, 1500] } },
+  layered: { base: { ...ATOFF }, vary: { at_len: [3000, 8000], at_b_lvl: [-6, 0], at_c_lvl: [-16, -6], at_s_lvl: [-18, -6], at_d_lvl: [-20, -8], at_move: [0.3, 0.8], at_x_phaser: [0, 0.5], at_x_rev: [-10, -2], at_x_size: [2000, 6000], at_p_hp: [60, 300] } },
+};
+export const rollAtmos = (P, r = Math.random, locked = new Set(), name) => { const Q = roll(P, r, locked, 'atmos', 4, ATMOS_FLAVORS, name); if (!locked.has('global')) Q.note = 24 + Math.floor(r() * 12); return Q; };
 export const rollWhoosh = (P, r = Math.random, locked = new Set(), name) => roll(P, r, locked, 'whoosh', 3, WHOOSH_FLAVORS, name || pick(r, WHOOSH_WEIGHTS));
