@@ -438,16 +438,25 @@ function showLayers() {
 
 // ---------------------------------------------------------------- boot
 buildBank(); renderSaved();
-loadJSON('init.json').then((j) => { initP = j; if (j && hpos <= 0) { P = { ...defaults(), ...j }; refreshAll(); } commit(); request(); });
 loadJSON('priors.json').then((j) => (priors = j));
 loadJSON('targets.json').then((j) => { if (j) { TARGETS = j; TARGETS.fitted = j.gun; drawTob(last?.tob); } });
-Promise.all([loadJSON('your_presets.json'), loadJSON('presets.json')]).then(([y, j]) => {
+// first load opens on a fitted gun; "init" in the preset menu is the plain starting patch
+const FIRST = 'filament B';
+Promise.all([loadJSON('init.json'), loadJSON('your_presets.json'), loadJSON('presets.json')]).then(([ini, y, j]) => {
+  initP = ini;
   const og2 = document.getElementById('og-yours');
   for (const pr of y || []) { const o = document.createElement('option'); o.value = o.textContent = pr.name; og2.append(o); }
   og2.hidden = !(y || []).length;
   presets = [...(y || []), ...(j || [])];
   const og = document.getElementById('og-fitted');
   for (const pr of j || []) { const o = document.createElement('option'); o.value = o.textContent = pr.name; og.append(o); }
+  if (hpos <= 0) {
+    const first = presets.find((x) => x.name === FIRST);
+    P = { ...defaults(), ...(first ? first.params : initP || {}) };
+    if (first) presetSel.value = FIRST;
+    refreshAll();
+  }
+  commit(); request();
 });
 addEventListener('resize', () => { if (last) { drawSpec(document.getElementById('spec'), last.spec, last.sr); drawWave(last.L, last.R); drawTob(last.tob); } });
 document.getElementById('arch').onchange = () => { drawTob(last?.tob); doRandomize(); };

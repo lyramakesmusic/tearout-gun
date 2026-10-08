@@ -21,7 +21,8 @@ writeFileSync('web/family_fits.json', JSON.stringify(fam));
 const lyra = fits.filter((f) => f.file.includes('/Music/Export/')).map((f) => ({ name: f.file.split('/').pop().replace(/\.wav$/, '').replace(/^lyraaaa /, ''), params: keep(f.params) }));
 const yours = JSON.parse(readFileSync('web/your_presets.json', 'utf8')).filter((p) => !/^snare \d$/.test(p.name) || p.params.engine === 1);
 const names = new Set(lyra.map((p) => p.name));
-writeFileSync('web/your_presets.json', JSON.stringify([...yours.filter((p) => !names.has(p.name)), ...lyra]));
+// snare fits stay out of the preset menu until they're close enough to their sources to carry the name
+writeFileSync('out/your_snare_presets.json', JSON.stringify(lyra));
 const tidy = (s) => s.replace(/\.(wav|aif+|flac)$/i, '').replace(/^(camaSnare( -)? ?ST\d\d -? ?)/, '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 40);
 const lib = good.filter((f) => !f.file.includes('/Music/Export/')).map((f) => ({ name: tidy(f.file.split('/').pop()), params: keep(f.params) }));
 writeFileSync('web/snare_presets.json', JSON.stringify(lib));

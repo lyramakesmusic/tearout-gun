@@ -1,12 +1,12 @@
 # Tearout Gun Synth
 
-A browser synth for tearout guns, snares, chugs, pings and trap flutes. Everything renders offline in Web Workers, so randomize, mutate, stems and reference fitting all run on the page with no server.
+A browser synth for tearout guns, snares, chugs and pings. Everything renders offline in Web Workers, so randomize, mutate, stems and reference fitting all run on the page with no server.
 
 **[Open it](https://lyramakesmusic.github.io/tearout-gun/)**
 
 ## Using it
 
-- **family** picks what randomize makes: `fitted` and `gun` roll variations of guns fitted to real gun samples; `snare` rolls variations of ~150 snares fitted from a sample library; `chug`, `ping` and `flute` have their own recipes.
+- **family** picks what randomize makes: `fitted` and `gun` roll variations of guns fitted to real gun samples; `snare` rolls variations of ~150 snares fitted from a sample library; `chug` and `ping` have their own recipes.
 - **randomize** rolls a new sound; **mutate** nudges the current one. Every group has its own **roll** and **lock**.
 - Drop a file on **+ layer** to stack a sample; drop one on **reference** to A/B it, see its tonal balance against yours, and **fit** the current engine to it.
 - Click a stem chip to solo it; drag it (or the main wav) into a DAW.
@@ -15,7 +15,7 @@ A browser synth for tearout guns, snares, chugs, pings and trap flutes. Everythi
 ## Engines
 
 - **Gun** (`dsp/engine.js`): sub with pitch dive, noise transient, noisy/modal/FM body, synth layer, spice, samples → crunch chain (disperser, convolver, drive, OTT rack, freq shift) → mids chain with a clean sub path → reverb from synthesized IRs.
-- **Snare** (`dsp/snare.js`, `dsp/snare_spec.js`): click, tuned tone, noise with its own drive and crunchy noise types, metal, clap, room → width (symmetric, tail only) → bus with whip formant, OTT, snap and clip. Also drives the flute family.
+- **Snare** (`dsp/snare.js`, `dsp/snare_spec.js`): click, tuned tone, noise with its own drive and crunchy noise types, metal, clap, room → width (symmetric, tail only) → bus with whip formant, OTT, snap and clip.
 
 ## How the sounds are made
 
