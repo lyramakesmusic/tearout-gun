@@ -441,6 +441,9 @@ function showLayers() {
 }
 
 // ---------------------------------------------------------------- boot
+// families that only show when running locally (works in progress)
+const LOCAL = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname), LOCAL_ONLY = ['chug'];
+if (!LOCAL) for (const o of [...document.querySelectorAll('#arch option')]) if (LOCAL_ONLY.includes(o.value)) o.remove();
 buildBank(); renderSaved();
 loadJSON('priors.json').then((j) => (priors = j));
 loadJSON('targets.json').then((j) => { if (j) { TARGETS = j; TARGETS.fitted = j.gun; drawTob(last?.tob); } });
@@ -449,6 +452,7 @@ const FIRST = 'filament B';
 Promise.all([loadJSON('init.json'), loadJSON('your_presets.json'), loadJSON('presets.json')]).then(([ini, y, j]) => {
   initP = ini;
   const og2 = document.getElementById('og-yours');
+  if (!LOCAL) y = (y || []).filter((pr) => !LOCAL_ONLY.some((f) => pr.name.startsWith(f)));
   for (const pr of y || []) { const o = document.createElement('option'); o.value = o.textContent = pr.name; og2.append(o); }
   og2.hidden = !(y || []).length;
   presets = [...(y || []), ...(j || [])];

@@ -969,7 +969,14 @@ function shotParams(p, s, r) {
   return q;
 }
 
+// every engine's output: 1 ms fade-in and a 10 ms raised-cosine fade-out, so starts and ends never click
 export function render(params, opts = {}) {
+  const o = renderRaw(params, opts), n = o.L.length, A = Math.min(n, Math.floor(0.001 * o.sr)), F = Math.min(n, Math.floor(0.01 * o.sr));
+  for (let i = 0; i < A; i++) { const g = i / A; o.L[i] *= g; o.R[i] *= g; }
+  for (let i = 0; i < F; i++) { const g = 0.5 - 0.5 * Math.cos((Math.PI * i) / F), k = n - 1 - i; o.L[k] *= g; o.R[k] *= g; }
+  return o;
+}
+function renderRaw(params, opts = {}) {
   const p = { ...defaults(), ...params };
   const sr = opts.sr || SR;
   if (engineOf(p) === '808') return render808(p, { ...opts, sr });

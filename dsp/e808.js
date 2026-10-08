@@ -4,16 +4,20 @@ import { SR, rng, biquad, lr4, shape, ottCore, rmsOf, dbToLin, midiHz, TAU } fro
 function subVoice(p, n, sr) {
   const base = p.note + 12 * Math.round(p.e8_s_oct) + p.e8_s_tune, td = p.e8_s_dive_ms / 1000, tr = p.e8_s_drift_ms / 1000, tc = p.e8_n_click_ms / 1000;
   const fd = p.e8_f_dec / 1000, x = new Float32Array(n);
-  let ph = 0, prev = 0;
+  let ph = 0, pm = 0, prevM = 0;
   for (let i = 0; i < n; i++) {
     const t = i / sr;
     const st = base + p.e8_s_dive * Math.exp(-t / td) + p.e8_s_drift * Math.exp(-t / tr) + p.e8_n_click * Math.exp(-t / tc);
-    ph += Math.min(midiHz(st), sr * 0.45) / sr; if (ph >= 1) ph -= 1;
+    const f = Math.min(midiHz(st), sr * 0.45);
+    ph += f / sr; if (ph >= 1) ph -= 1;
+    // phase modulation: the modulator runs on its own phase at ratio × the carrier's frequency, with self-feedback
+    pm += (f * p.e8_f_ratio) / sr; if (pm >= 1) pm -= 1;
     const I = p.e8_f_amt * (p.e8_f_sustain + (1 - p.e8_f_sustain) * Math.exp(-t / fd));
-    const m = I > 1e-4 ? I * Math.sin(TAU * ph * p.e8_f_ratio + p.e8_f_fb * 2 * prev) : 0;
+    let m = 0;
+    if (I > 1e-4) { prevM = Math.sin(TAU * pm + p.e8_f_fb * 1.5 * prevM); m = I * prevM; }
     let q = ph + m / TAU; q -= Math.floor(q);
     const sine = Math.sin(TAU * q), tri = 1 - 4 * Math.abs(((q + 0.25) % 1) - 0.5);
-    prev = (1 - p.e8_s_shape) * sine + p.e8_s_shape * tri; x[i] = prev;
+    x[i] = (1 - p.e8_s_shape) * sine + p.e8_s_shape * tri;
   }
   return x;
 }
@@ -56,6 +60,7 @@ export function render808(p, opts = {}) {
   let pk = 0; for (const v of dry) pk = Math.max(pk, Math.abs(v));
   const pre = opts.fixed ? opts.fixed.pre : pk > 0 ? 1 / pk : 1, x = Float32Array.from(dry, (v) => v * pre);
   const wet = saturate(x.slice(), p, sr);
+  biquad(wet, 'hp', 12, 0.707, 0, sr); // asymmetric (tube) saturation leaves DC; remove it so the cutoff doesn't thump
   if (p.e8_p_tone < 19900) lr4(wet, 'lp', p.e8_p_tone, sr);
   // clean sub: below the crossover, blend back the undistorted sine at the same level
   if (p.e8_p_clean > 0.001) {
