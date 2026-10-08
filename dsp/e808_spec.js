@@ -32,16 +32,17 @@ export const E808_SPEC = [
   S('e8_noise', 'e8_n_click_ms', 'click time', 0.3, 10, 2, 'log', 'ms'),
 
   // POST — saturation, filter, OTT, clip, EQ; the sub below the crossover can stay clean
-  S('e8_post', 'e8_p_drive', 'drive', 0, 40, 14, 'lin', 'dB'),
+  S('e8_post', 'e8_p_drive', 'drive', 0, 40, 8, 'lin', 'dB'),
+  S('e8_post', 'e8_p_drive_fall', 'drive falls', 0, 1, 0.5),
   S('e8_post', 'e8_p_type', 'type', 0, 3, 3, 'int', 'tanh/hard/fold/tube'),
-  S('e8_post', 'e8_p_tone', 'tone', 200, 20000, 6000, 'log', 'Hz'),
+  S('e8_post', 'e8_p_tone', 'tone', 200, 20000, 3500, 'log', 'Hz'),
   S('e8_post', 'e8_p_clean', 'clean sub', 0, 1, 0),
   S('e8_post', 'e8_p_xover', 'crossover', 40, 200, 90, 'log', 'Hz'),
   S('e8_post', 'e8_p_ott', 'OTT', 0, 1, 0),
   S('e8_post', 'e8_p_low', 'low', -12, 12, 0, 'lin', 'dB'),
   S('e8_post', 'e8_p_mid', 'mid', -12, 12, 0, 'lin', 'dB'),
   S('e8_post', 'e8_p_mid_f', 'mid freq', 150, 3000, 500, 'log', 'Hz'),
-  S('e8_post', 'e8_p_clip', 'clip', 0, 18, 3, 'lin', 'dB'),
+  S('e8_post', 'e8_p_clip', 'clip', 0, 18, 1.5, 'lin', 'dB'),
 ];
 export const E808_GROUPS = [['e8_sub', 'sub'], ['e8_fm', 'FM'], ['e8_noise', 'noise'], ['e8_post', 'post']];
 export const E808_LEVEL = { e8_sub: 'e8_s_lvl', e8_noise: 'e8_n_lvl' };

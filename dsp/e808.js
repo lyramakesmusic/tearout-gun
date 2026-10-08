@@ -34,8 +34,10 @@ function noiseVoice(p, n, sr, r) {
   biquad(x, 'hp', p.e8_n_hp, 0.707, 0, sr); biquad(x, 'hp', p.e8_n_hp, 0.707, 0, sr);
   return x;
 }
-function saturate(x, p) {
-  const t = Math.round(p.e8_p_type), d = p.e8_p_drive;
+// drive falls over the hit (gritty attack, cleaner tail): input gain follows exp(−t/250 ms) by `drive falls`
+function saturate(x, p, sr) {
+  const t = Math.round(p.e8_p_type), d = p.e8_p_drive, f = p.e8_p_drive_fall ?? 0;
+  if (f > 0.001) for (let i = 0; i < x.length; i++) x[i] *= dbToLin(-d * f * (1 - Math.exp(-i / (0.25 * sr))));
   if (t === 3) { // tube: asymmetric, adds even harmonics
     const g = dbToLin(d), b = 0.3, o = Math.tanh(b);
     for (let i = 0; i < x.length; i++) x[i] = Math.tanh(g * x[i] + b) - o;
@@ -53,8 +55,8 @@ export function render808(p, opts = {}) {
   // saturation on a peak-normalized copy, so drive means the same thing at any level
   let pk = 0; for (const v of dry) pk = Math.max(pk, Math.abs(v));
   const pre = opts.fixed ? opts.fixed.pre : pk > 0 ? 1 / pk : 1, x = Float32Array.from(dry, (v) => v * pre);
-  const wet = saturate(x.slice(), p);
-  if (p.e8_p_tone < 19900) biquad(wet, 'lp', p.e8_p_tone, 0.707, 0, sr);
+  const wet = saturate(x.slice(), p, sr);
+  if (p.e8_p_tone < 19900) lr4(wet, 'lp', p.e8_p_tone, sr);
   // clean sub: below the crossover, blend back the undistorted sine at the same level
   if (p.e8_p_clean > 0.001) {
     const lowW = lr4(wet.slice(), 'lp', p.e8_p_xover, sr), lowD = lr4(x.slice(), 'lp', p.e8_p_xover, sr), hiW = lr4(wet, 'hp', p.e8_p_xover, sr);
@@ -65,8 +67,8 @@ export function render808(p, opts = {}) {
   ottCore(wet, R, p.e8_p_ott, 0.6, 1, sr);
   if (Math.abs(p.e8_p_low) > 0.05) biquad(wet, 'ls', 80, 0.7, p.e8_p_low, sr);
   if (Math.abs(p.e8_p_mid) > 0.05) biquad(wet, 'peak', p.e8_p_mid_f, 0.9, p.e8_p_mid, sr);
-  // final clip, then −0.3 dBFS
-  shape(wet, p.e8_p_clip, 0.8);
+  // final soft clip, then −0.3 dBFS
+  shape(wet, p.e8_p_clip, 0.2);
   let pk2 = 0; for (const v of wet) pk2 = Math.max(pk2, Math.abs(v));
   const g = opts.fixed ? opts.fixed.g : pk2 > 0 ? 0.966 / pk2 : 1;
   const F = Math.floor(0.004 * sr);

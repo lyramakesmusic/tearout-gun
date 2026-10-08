@@ -86,3 +86,23 @@ export function bank(n = 1500, file = 'out/bank.json') {
   return out;
 }
 export const nearest = (B, E, k = 5) => B.map((b, i) => [edist(b.E, E), i]).sort((x, y) => x[0] - y[0]).slice(0, k).map(([d, i]) => ({ ...B[i], d }));
+
+// sensitivity at P: loss change for a ±0.08 move of each knob (2 renders per knob), most sensitive first
+export function sensitivity(t, P, ids) {
+  const f0 = t.loss(P);
+  return ids.map((id) => { const s = SPEC_BY_ID[id], u = toNorm(s, P[id]); return [id, Math.max(Math.abs(t.loss({ ...P, [id]: fromNorm(s, Math.min(1, u + 0.08)) }) - f0), Math.abs(t.loss({ ...P, [id]: fromNorm(s, Math.max(0, u - 0.08)) }) - f0))]; }).sort((a, b) => b[1] - a[1]);
+}
+// coordinate descent: knobs in sensitivity order, a shrinking step tried both ways, improvements kept, cycling
+export function coord(t, P, order, budget, step = 0.2) {
+  let best = { P, f: t.loss(P) }, used = 1;
+  while (used < budget && step > 0.01) {
+    for (const id of order) {
+      if (used >= budget) break;
+      const s = SPEC_BY_ID[id], u = toNorm(s, best.P[id]);
+      for (const d of [step, -step]) { const Q = { ...best.P, [id]: fromNorm(s, u + d) }, f = t.loss(Q); used++; if (f < best.f) { best = { P: Q, f }; break; } }
+    }
+    step *= 0.6;
+  }
+  return best;
+}
+export function refineCD(t, P, budget) { const ids = liveIds(P), S = sensitivity(t, P, ids); return coord(t, P, S.map(([id]) => id), budget - 1 - 2 * ids.length); }
