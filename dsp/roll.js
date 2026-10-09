@@ -4,7 +4,7 @@ import { rollArchetype, balance, TARGETS } from './archetypes.js';
 import { randomize, mutate } from './random.js';
 import { features, gunScore } from './gunness.js';
 import { engineOf, lr4 } from './engine.js';
-import { rollSnareFlavor, rollSnareAnchored } from './snare_roll.js';
+import { rollSnareFlavor, rollSnareAnchored, rollSnareLibrary } from './snare_roll.js';
 import { roll808, rollWhoosh, rollAtmos } from './flavors.js';
 
 // energy after 500 ms relative to the whole hit, dB
@@ -45,7 +45,7 @@ export function roll(mode, P, { priors, ref, famRefs = null, famFits = null, loc
       : mode === '808' ? roll808(P, r, locked)
       : mode === 'whoosh' ? rollWhoosh(P, r, locked)
       : mode === 'atmos' ? rollAtmos(P, r, locked)
-      : mode === 'snare' ? (famFits?.snare_eng?.length && r() < 0.75 ? rollSnareAnchored(P, famFits.snare_eng, r, locked) : rollSnareFlavor(P, r, locked))
+      : mode === 'snare' ? (famFits?.snare_lib?.length && r() < 0.8 ? rollSnareLibrary(P, famFits.snare_lib, r, locked) : famFits?.snare_eng?.length && r() < 0.5 ? rollSnareAnchored(P, famFits.snare_eng, r, locked) : rollSnareFlavor(P, r, locked))
       : mode === 'fitted' ? randomize(P, priors, locked, r)
       : anchors?.length && mode !== 'snare' ? balance(randomize(P, { guns: anchors, keepSpice: true }, locked, r), locked, TARGETS[mode])
       : rollArchetype(mode, r, locked, P);

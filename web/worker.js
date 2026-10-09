@@ -1,13 +1,30 @@
 import { render, fft, renderStems, setSample } from '../dsp/engine.js';
 import { roll } from '../dsp/roll.js';
 import { steer } from '../dsp/cvae.js';
-import { fitTo } from '../dsp/fitstages.js';
+import { fitTo, fitLoss } from '../dsp/fitstages.js';
+import { makePool } from '../dsp/pool.js';
+import { melOf, pitchOf, decodeInv } from '../dsp/invfeat.js';
 let cv = null;
+// inverse model: onnxruntime-web, loaded on the first snare fit
+let inv = null;
+async function invModel() {
+  if (inv) return inv;
+  const ort = await import('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.wasm.min.mjs');
+  ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+  const [sess, meta] = await Promise.all([ort.InferenceSession.create('inv2.onnx'), fetch('inv2.json').then((r) => r.json())]);
+  return (inv = { ort, sess, meta });
+}
+async function invGuess(x, base) {
+  const { ort, sess, meta } = await invModel(), mel = melOf(x), pit = pitchOf(x);
+  const r = await sess.run({ mel: new ort.Tensor('float32', Float32Array.from(mel, (v) => v / 255), [1, 1, meta.frames, meta.bands]), pitch: new ort.Tensor('float32', Float32Array.from(pit, (v) => v / 255), [1, 1, meta.pbins]) });
+  return decodeInv(meta, r.out.data, base);
+}
 let priors = null, ref = null, famRefs = null, famFits = null;
 if (typeof WorkerGlobalScope !== 'undefined') {
   fetch('priors.json').then((r) => (r.ok ? r.json() : null)).then((j) => (priors = j)).catch(() => {});
   fetch('cvae.json').then((r) => (r.ok ? r.json() : null)).then((j) => (cv = j)).catch(() => {});
-  fetch('family_fits.json').then((r) => (r.ok ? r.json() : null)).then((j) => (famFits = j)).catch(() => {});
+  fetch('family_fits.json').then((r) => (r.ok ? r.json() : null)).then((j) => { famFits = { ...j, snare_lib: famFits?.snare_lib }; }).catch(() => {});
+  fetch('snare_lib.json').then((r) => (r.ok ? r.json() : null)).then((L) => { if (L) (famFits ||= {}).snare_lib = L.rows.map((row) => Object.fromEntries(L.keys.map((k, i) => [k, row[i]]))); }).catch(() => {});
   fetch('family_refs.json').then((r) => (r.ok ? r.json() : null)).then((j) => (famRefs = j)).catch(() => {});
   fetch('gunness.json').then((r) => (r.ok ? r.json() : null)).then((j) => (ref = j)).catch(() => {});
 }
@@ -53,12 +70,16 @@ export function thirdOct(x, sr) {
   return { centers, db: db.map((v) => v - mx) };
 }
 
-if (typeof WorkerGlobalScope !== "undefined") self.onmessage = (e) => {
+if (typeof WorkerGlobalScope !== "undefined") self.onmessage = async (e) => {
   const { id, params, ref: refFile, rollReq, stemsReq, sample, steerReq, fitReq } = e.data;
   if (fitReq) { // staged fit of the current engine to the reference; progress after every stage
     const { mono, sr } = fitReq, r = sr / 48000, n = Math.floor(mono.length / r), x = new Float32Array(n);
     for (let i = 0; i < n; i++) { const t = i * r, j = Math.floor(t); x[i] = mono[j] + (t - j) * ((mono[j + 1] ?? mono[j]) - mono[j]); }
-    const out = fitTo(x, fitReq.P, { scale: fitReq.scale || 0.6, onProgress: (p) => self.postMessage({ id, fitProgress: p }) });
+    let guess = null;
+    if (fitReq.P.engine === 1 && !fitReq.noModel) try { self.postMessage({ id, fitProgress: { stage: 'model', i: 0, of: 1 } }); guess = await invGuess(x, fitReq.P); self.postMessage({ id, fitProgress: { stage: 'model', i: 1, of: 1, P: guess } }); } catch (err) { console.warn('inverse model unavailable', err); }
+    const pool = fitReq.threads === 1 ? null : await makePool(x, fitReq.P, fitReq.threads || Math.max(2, Math.min(10, (navigator.hardwareConcurrency || 4) - 2)), new URL('evalworker.js', import.meta.url), fitLoss(x, fitReq.P).loss);
+    const out = fitTo(x, fitReq.P, { scale: fitReq.scale || 0.6, guess, batch: pool?.batch, onProgress: (p) => self.postMessage({ id, fitProgress: p }) });
+    pool?.close();
     self.postMessage({ id, fitDone: out });
     return;
   }

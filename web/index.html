@@ -89,6 +89,10 @@
     #stat { display: none; }
   }
 </style>
+<script>
+// cross-origin isolation for parallel fitting: one reload the first time the service worker installs
+if (!self.crossOriginIsolated && window.isSecureContext && "serviceWorker" in navigator) navigator.serviceWorker.register("coi-sw.js").then(() => { if (!navigator.serviceWorker.controller && !sessionStorage.coiReloaded) { sessionStorage.coiReloaded = 1; location.reload(); } }).catch(() => {});
+</script>
 </head>
 <body>
 <header>

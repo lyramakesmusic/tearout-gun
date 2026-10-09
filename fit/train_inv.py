@@ -13,7 +13,7 @@ N = len(P); print(N, "samples", D, "knobs")
 cont = [i for i, k in enumerate(K) if not k["int"]]
 ints = [(i, k["max"] - k["min"] + 1) for i, k in enumerate(K) if k["int"]]
 # mask: a layer's knobs only count when its level knob is above "off" (−59 dB → normalized ≈ 0.015 on a −60..6 dB range)
-LVL = {"sn_click": "sn_c_lvl", "sn_metal": "sn_m_lvl", "sn_clap": "sn_k_lvl", "sn_room": "sn_r_lvl", "sn_tone": "sn_t_lvl", "sn_noise": "sn_n_lvl"}
+LVL = {"sn_hit": "sn_h_lvl", "sn_click": "sn_c_lvl", "sn_metal": "sn_m_lvl", "sn_clap": "sn_k_lvl", "sn_room": "sn_r_lvl", "sn_tone": "sn_t_lvl", "sn_noise": "sn_n_lvl"}
 ids = [k["id"] for k in K]; group = {}
 for i, k in enumerate(K):
     for g, lv in LVL.items():

@@ -1,4 +1,4 @@
-// Snare engine: staggered layers (pre, click, tone, noise, metal, clap) -> room -> bus.
+// Snare engine: layers (hit, click, tone, noise, metal, clap) -> room -> bus; the hit lands on top of the bus clipper.
 import {
   SR, rng, biquad, lr4, shape, envFollow, ottCore, snap, makeIR, convolveStereo, normRms, rmsOf, dbToLin, midiHz, TAU,
 } from './engine.js';
@@ -228,15 +228,27 @@ function renderClap(p, n, sr, r) {
 // signal, faded in after the hit, so the transient and the lows stay mono and the tail opens up
 function widen(L, R, p, sr, r) {
   if (p.sn_w_amt < 0.005) return;
-  const n = L.length, m = Float32Array.from(L, (v, i) => 0.5 * (v + R[i]));
+  const n = L.length, m = new Float32Array(n); for (let i = 0; i < n; i++) m[i] = 0.5 * (L[i] + R[i]);
   const hi = lr4(m.slice(), 'hp', p.sn_w_hp, sr), s = hi.slice();
   for (let k = 0; k < 10; k++) biquad(s, 'ap', 300 * Math.pow(40, r()), 0.4 + 1.6 * r(), 0, sr);
   const g = rmsOf(hi) / (rmsOf(s) || 1), F = Math.max(1, (p.sn_w_fade * sr) / 1000), a = p.sn_w_amt * g;
   for (let i = 0; i < n; i++) { const w = a * (i < F ? 0.5 - 0.5 * Math.cos((Math.PI * i) / F) : 1); L[i] += w * s[i]; R[i] -= w * s[i]; }
 }
 
+// ---------------------------------------------------------------- hit
+// a full-scale noise burst: flat for its length, then a fast fall; tilted dark (lowpass) or bright (highpass); peak 1
+function renderHit(p, n, sr, r) {
+  const hold = Math.ceil((p.sn_h_len * sr) / 1000), tau = hold / 2, m = Math.min(n, hold + Math.ceil(5 * tau)), x = new Float32Array(n);
+  const s0 = Math.floor(0.00025 * sr); for (let i = 0; i < m; i++) x[i + s0 < n ? i + s0 : n - 1] = (i === 0 ? 1 : r() * 2 - 1) * (i < hold ? 1 : Math.exp(-(i - hold) / tau));
+  const c = p.sn_h_color;
+  if (c < 0) biquad(x, 'lp', 16000 * 2 ** (c * 4), 0.707, 0, sr); else if (c > 0.02) biquad(x, 'hp', 100 * 2 ** (c * 5), 0.707, 0, sr);
+  if (p.sn_h_drive > 0.05) { const g = dbToLin(p.sn_h_drive); for (let i = 0; i < Math.min(n, m + s0); i++) x[i] = Math.tanh(x[i] * g); }
+  let pk = 1e-9; for (let i = 0; i < Math.min(n, m + s0); i++) pk = Math.max(pk, Math.abs(x[i])); for (let i = 0; i < n; i++) x[i] /= pk;
+  return x;
+}
+
 // ---------------------------------------------------------------- render
-const LAYERS = [['click', 'sn_c_lvl'], ['tone', 'sn_t_lvl'], ['noise', 'sn_n_lvl'], ['metal', 'sn_m_lvl'], ['clap', 'sn_k_lvl']];
+const LAYERS = [['hit', 'sn_h_lvl'], ['click', 'sn_c_lvl'], ['tone', 'sn_t_lvl'], ['noise', 'sn_n_lvl'], ['metal', 'sn_m_lvl'], ['clap', 'sn_k_lvl']];
 const TIMED = /^sn_(t_(att|hold|dec|pitch_ms)|n_(att|hold|dec|close_ms|flutter_ms)|c_len|m_(att|dec)|k_(gap|dec)|r_size|b_whip_ms)$/;
 export function renderSnare(p0, opts = {}) {
   const sr = opts.sr || SR, seed = p0.seed | 0, n = Math.floor((p0.len * sr) / 1000);
@@ -244,18 +256,19 @@ export function renderSnare(p0, opts = {}) {
   if (Math.abs(tm - 1) > 1e-3) for (const k in p) if (TIMED.test(k)) p[k] *= tm;
   const lay = {};
   const mono = (x) => [x, x];
+  if (p.sn_h_lvl > -59) lay.hit = mono(renderHit(p, n, sr, rng(seed * 7 + 1)));
   if (p.sn_c_lvl > -59) lay.click = mono(delayed(renderClick(p, n, sr, rng(seed * 13 + 3)), p.sn_c_delay, sr));
   if (p.sn_t_lvl > -59) lay.tone = mono(delayed(renderTone(p, n, sr, rng(seed * 19 + 11)), p.sn_t_delay, sr));
   if (p.sn_n_lvl > -59) lay.noise = renderNoise(p, n, sr, seed).map((x) => delayed(x, p.sn_n_delay, sr));
   if (p.sn_m_lvl > -59) lay.metal = renderMetal(p, n, sr, seed).map((x) => delayed(x, p.sn_m_delay, sr));
   if (p.sn_k_lvl > -59) lay.clap = mono(delayed(renderClap(p, n, sr, rng(seed * 43 + 5)), p.sn_k_delay, sr));
-  for (const [k, id] of LAYERS) if (lay[k]) { const g = dbToLin(p[id]); lay[k] = lay[k].map((x) => Float32Array.from(x, (v) => v * g)); }
+  for (const [k, id] of LAYERS) if (lay[k]) { const g = dbToLin(p[id]); const done = new Set(); for (const x of lay[k]) if (!done.has(x)) { done.add(x); for (let i = 0; i < x.length; i++) x[i] *= g; } }
   if (opts.extra) for (const [k, v] of Object.entries(opts.extra)) if (v) lay[k] = v; // dropped sample layers
   const P = 0, N = n;
   const dry = [new Float32Array(n), new Float32Array(n)];
   const solo = opts.solo;
   for (const [k, v] of Object.entries(lay)) {
-    if (solo && solo !== k) continue;
+    if ((solo && solo !== k) || k === 'hit') continue; // the hit lands after the bus clipper
     for (let c = 0; c < 2; c++) for (let i = 0; i < n; i++) dry[c][i] += v[c][i];
   }
   const L = new Float32Array(N), R = new Float32Array(N);
@@ -264,7 +277,7 @@ export function renderSnare(p0, opts = {}) {
   if (p.sn_r_lvl > -59 && (!solo || solo === 'room')) {
     const send = new Float32Array(N); for (let i = 0; i < N; i++) send[i] = 0.5 * (L[i] + R[i]);
     if (solo === 'room') { // the room stem hears the whole kit
-      for (const v of Object.values(lay)) for (let i = 0; i < n; i++) send[P + i] += 0.5 * (v[0][i] + v[1][i]);
+      for (const [k, v] of Object.entries(lay)) if (k !== 'hit') for (let i = 0; i < n; i++) send[P + i] += 0.5 * (v[0][i] + v[1][i]);
       L.fill(0); R.fill(0);
     }
     const [hL, hR] = makeIR({ rev_type: p.sn_r_type, rev_size: p.sn_r_size, rev_char: p.sn_r_char, rev_tone: p.sn_r_tone, rev_pre: 2, seed: p.seed }, sr);
@@ -274,7 +287,7 @@ export function renderSnare(p0, opts = {}) {
     for (let i = 0; i < N; i++) { L[i] += cL[i] * g; R[i] += cR[i] * g; }
   }
   widen(L, R, p, sr, rng(seed * 53 + 9));
-  const gains = snareBus(L, R, p, sr, opts.fixed, P);
+  const gains = snareBus(L, R, p, sr, opts.fixed, P, !solo || solo === 'hit' ? lay.hit : null);
   return { L, R, sr, layers: lay, gains, pre: P };
 }
 
@@ -291,7 +304,7 @@ function tvPeak(x, f0, f1, ms, gainDb, q, sr, start) {
     const xi = x[i], y = b0 * xi + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = xi; y2 = y1; y1 = y; x[i] = y;
   }
 }
-function snareBus(L, R, p, sr, fixed, start = 0) {
+function snareBus(L, R, p, sr, fixed, start = 0, hit = null) {
   if (p.sn_b_dip > 0.001) { // short notch right after the click: snappier
     const a = start + Math.floor(0.003 * sr), w = Math.floor(0.009 * sr);
     for (let i = 0; i < w && a + i < L.length; i++) { const g = 1 - 0.6 * p.sn_b_dip * Math.sin((Math.PI * i) / w); L[a + i] *= g; R[a + i] *= g; }
@@ -309,9 +322,13 @@ function snareBus(L, R, p, sr, fixed, start = 0) {
   const pre = fixed ? fixed.pre : pk > 0 ? 0.7 / pk : 1; for (let i = 0; i < L.length; i++) { L[i] *= pre; R[i] *= pre; }
   shape(L, p.sn_b_drive, p.sn_b_hard); shape(R, p.sn_b_drive, p.sn_b_hard);
   shape(L, 3, 0.2); shape(R, 3, 0.2);
+  // hit: on top of the clipped body, level re the body's clipped peak
+  pk = 0; for (let i = 0; i < L.length; i++) pk = Math.max(pk, Math.abs(L[i]), Math.abs(R[i]));
+  const hp = fixed?.hp ?? pk;
+  if (hit) for (let i = 0; i < L.length; i++) { L[i] += hit[0][i] * hp; R[i] += hit[1][i] * hp; }
   pk = 0; for (let i = 0; i < L.length; i++) pk = Math.max(pk, Math.abs(L[i]), Math.abs(R[i]));
   const g = fixed ? fixed.g : pk > 0 ? 0.966 / pk : 1; for (let i = 0; i < L.length; i++) { L[i] *= g; R[i] *= g; }
   // fade the last 5 ms
   const F = Math.floor(0.005 * sr); for (let i = 0; i < F; i++) { const k = L.length - 1 - i; if (k < 0) break; L[k] *= i / F; R[k] *= i / F; }
-  return { pre, g };
+  return { pre, g, hp };
 }

@@ -385,12 +385,15 @@ function fft(re, im, inv) {
   if (inv) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
 }
 export { fft };
+// spectra of the IRs, per FFT size
+const irSpec = new WeakMap();
 // mono x convolved with stereo IR (hL, hR) via one complex FFT (IR packed as re/im)
 export function convolveStereo(x, hL, hR, outLen) {
   let n = 1; while (n < x.length + hL.length) n <<= 1;
-  const xr = new Float64Array(n), xi = new Float64Array(n), hr = new Float64Array(n), hi = new Float64Array(n);
-  xr.set(x); hr.set(hL); hi.set(hR);
-  fft(xr, xi, false); fft(hr, hi, false);
+  const xr = new Float64Array(n), xi = new Float64Array(n); xr.set(x); fft(xr, xi, false);
+  let byN = irSpec.get(hL); if (!byN) irSpec.set(hL, (byN = new Map()));
+  let H = byN.get(n); if (!H || H.hR !== hR) { const hr = new Float64Array(n), hi = new Float64Array(n); hr.set(hL); hi.set(hR); fft(hr, hi, false); H = { hr, hi, hR }; byN.set(n, H); }
+  const { hr, hi } = H;
   for (let k = 0; k < n; k++) { const a = xr[k], b = xi[k], c = hr[k], d = hi[k]; xr[k] = a * c - b * d; xi[k] = a * d + b * c; }
   fft(xr, xi, true);
   return [Float32Array.from(xr.subarray(0, outLen)), Float32Array.from(xi.subarray(0, outLen))];
@@ -972,9 +975,9 @@ function shotParams(p, s, r) {
   return q;
 }
 
-// every engine's output: 1 ms fade-in and a 10 ms raised-cosine fade-out, so starts and ends never click
+// every engine's output: a fade-in (0.15 ms for snares, so the hit keeps its edge; 1 ms otherwise) and a 10 ms raised-cosine fade-out, so starts and ends never click
 export function render(params, opts = {}) {
-  const o = renderRaw(params, opts), n = o.L.length, A = Math.min(n, Math.floor(0.001 * o.sr)), F = Math.min(n, Math.floor(0.01 * o.sr));
+  const o = renderRaw(params, opts), n = o.L.length, A = Math.min(n, Math.floor((engineOf(params) === "snare" ? 0.00015 : 0.001) * o.sr)), F = Math.min(n, Math.floor(0.01 * o.sr));
   for (let i = 0; i < A; i++) { const g = i / A; o.L[i] *= g; o.R[i] *= g; }
   for (let i = 0; i < F; i++) { const g = 0.5 - 0.5 * Math.cos((Math.PI * i) / F), k = n - 1 - i; o.L[k] *= g; o.R[k] *= g; }
   return o;

@@ -1,8 +1,9 @@
 // Fitting lab: shared pieces for comparing fitting algorithms at a fixed render budget.
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { render, SPEC, SPEC_BY_ID, toNorm, fromNorm, defaults, SR } from '../dsp/engine.js';
+import { render, SPEC, SPEC_BY_ID, toNorm, fromNorm, defaults, SR, biquad } from '../dsp/engine.js';
 import { readWav } from './lib.js';
-import { melStack, melLoss, ltas, ltasLoss, thirdOct, tobLoss, logMel, cmaes } from '../dsp/fitcore.js';
+import { melStack, melLoss, ltas, ltasLoss, thirdOct, tobLoss, logMel, cmaes , tenv, tenv2, tenvLoss, tenv2Loss, fspec, fspecLoss } from '../dsp/fitcore.js';
+export { tenv, tenv2, tenvLoss, tenv2Loss };
 import { prepTarget } from '../dsp/fitstages.js';
 import { rollSnareAnchored, rollSnareFlavor } from '../dsp/snare_roll.js';
 
@@ -55,8 +56,19 @@ export function targetFrom(x, path = '') {
   const lossV4 = (P) => { evals++; const o = render({ ...P, len: lenMs + 60, b_shots: 1 }); const m = new Float32Array(n); m.set(trim(mono(o)).subarray(0, n)); const S = smoothT(melStack(m, SR), W, 30, FW);
     const fine = melLoss([{ ...S[2], frames: Math.min(S[2].frames, attF) }], [{ ...T4[2], frames: Math.min(T4[2].frames, attF) }]).loss;
     return melLoss([S[0], S[1]], [T4[0], T4[1]]).loss * (2 / 3) + fine / 3 + 0.5 * ltasLoss(smooth(ltas(m, SR), 8), TL3) + 0.3 * tobLoss(m, TT, SR); };
-  const loss = { v1: lossV1, v2: lossV2, v3: lossV3, v4: lossV4 }[process.env.LOSS || 'v2'];
-  return { path, lenMs, n, T0, E, loss, evals: () => evals, reset: () => (evals = 0) };
+  // v5: v2 + the first 40 ms as a 0.5 ms log-RMS envelope, each signal re its own peak (the transient carries its own term)
+  const TW = +(process.env.TW || 0.3), TE = tenv(T0);
+  const lossV5 = (P) => { evals++; const o = render({ ...P, len: lenMs + 60, b_shots: 1 }); const m = new Float32Array(n); m.set(trim(mono(o)).subarray(0, n)); return melLoss(melStack(m, SR), T).loss + 0.5 * ltasLoss(smooth(ltas(m, SR)), TL) + 0.3 * tobLoss(m, TT, SR) + TW * tenvLoss(tenv(m), TE); };
+  let loss = { v1: lossV1, v2: lossV2, v3: lossV3, v4: lossV4, v5: lossV5 }[process.env.LOSS || "v2"];
+  // v6: v5 with the transient envelope split into bands below and above 3 kHz
+  const TE2 = tenv2(T0, +(process.env.SPLIT || 6000));
+  const lossV6 = (P) => { evals++; const o = render({ ...P, len: lenMs + 60, b_shots: 1 }); const m = new Float32Array(n); m.set(trim(mono(o)).subarray(0, n)); return melLoss(melStack(m, SR), T).loss + 0.5 * ltasLoss(smooth(ltas(m, SR)), TL) + 0.3 * tobLoss(m, TT, SR) + TW * tenv2Loss(tenv2(m, +(process.env.SPLIT || 6000)), TE2); };
+  if (process.env.LOSS === "v6") loss = lossV6;
+  const TF = fspec(T0), SW = +(process.env.SW || 0.1);
+  const lossV7 = (P) => { evals++; const o = render({ ...P, len: lenMs + 60, b_shots: 1 }); const m = new Float32Array(n); m.set(trim(mono(o)).subarray(0, n)); return melLoss(melStack(m, SR), T).loss + 0.5 * ltasLoss(smooth(ltas(m, SR)), TL) + 0.3 * tobLoss(m, TT, SR) + TW * tenv2Loss(tenv2(m, +(process.env.SPLIT || 6000)), TE2) + SW * fspecLoss(fspec(m), TF); };
+  if (process.env.LOSS === "v7") loss = lossV7;
+  const lossOf = { v2: lossV2, v5: lossV5, v6: lossV6, v7: lossV7 };
+  return { path, lenMs, n, T0, E, loss, lossOf, evals: () => evals, reset: () => (evals = 0) };
 }
 
 // CMA over a list of param ids starting from P; returns { P, f }
@@ -68,7 +80,7 @@ export function cma(t, P, ids, ev, sigma = 0.2, seed = 3) {
 }
 // parameters that matter for a patch: drop knobs of layers that are off
 export function liveIds(P) {
-  const off = { sn_click: P.sn_c_lvl <= -59, sn_metal: P.sn_m_lvl <= -59, sn_clap: P.sn_k_lvl <= -59, sn_room: P.sn_r_lvl <= -59 };
+  const off = { sn_hit: P.sn_h_lvl <= -59, sn_click: P.sn_c_lvl <= -59, sn_metal: P.sn_m_lvl <= -59, sn_clap: P.sn_k_lvl <= -59, sn_room: P.sn_r_lvl <= -59 };
   return SN.filter((s) => !off[s.g] || s.id.endsWith('_lvl')).map((s) => s.id).filter((id) => !['sn_b_time', 'sn_n_width', 'sn_w_amt', 'sn_w_fade', 'sn_w_hp'].includes(id));
 }
 

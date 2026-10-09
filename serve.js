@@ -12,7 +12,7 @@ createServer(async (req, res) => {
   if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end(); }
   try {
     const body = await readFile(file);
-    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store', 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'credentialless' });
     res.end(body);
   } catch { res.writeHead(404); res.end(); }
 }).listen(8642, () => console.log('http://localhost:8642/web/'));

@@ -90,7 +90,7 @@ export function rollSnareFlavor(P, r = Math.random, locked = new Set(), flavor =
 }
 // jitter around a fitted snare; type switches re-pick now and then
 export function rollSnareAnchored(P, anchors, r = Math.random, locked = new Set(), sd = 0.08) {
-  const A = pick(r, anchors), Q = { ...P, ...A, engine: 1 };
+  const A = pick(r, anchors), Q = relock({ ...P, ...A, engine: 1 }, P, locked);
   for (const s of SPEC) {
     if (!inEngine(s, 'snare') || s.g.startsWith('sample') || locked.has(s.g) || s.id === 'len' || s.id === 'note') continue;
     if (s.id === 'seed') { Q.seed = 1 + Math.floor(r() * 9999); continue; }
@@ -99,5 +99,15 @@ export function rollSnareAnchored(P, anchors, r = Math.random, locked = new Set(
     if (s.scale === 'int' && s.unit?.includes('/') && r() < 0.2) u = r();
     Q[s.id] = fromNorm(s, u);
   }
+  return relock(Q, P, locked);
+}
+// keep locked groups (and their switches) from P
+function relock(Q, P, locked) { if (locked.size) for (const s of SPEC) if (inEngine(s, 'snare') && locked.has(s.g)) Q[s.id] = P[s.id]; return Q; }
+// library of fitted real snares: a fit with a nudge, or a layer-wise cross of two fits
+export function rollSnareLibrary(P, lib, r = Math.random, locked = new Set(), sd = 0.05) {
+  if (r() < 0.6) return rollSnareAnchored(P, lib, r, locked, sd);
+  const Q = rollSnareAnchored(P, lib, r, locked, sd * 0.6), B = pick(r, lib);
+  const groups = [...new Set(SPEC.filter((s) => inEngine(s, 'snare') && s.g.startsWith('sn_')).map((s) => s.g))];
+  for (const g of groups) if (!locked.has(g) && r() < 0.5) for (const s of SPEC) if (s.g === g && B[s.id] !== undefined) Q[s.id] = B[s.id];
   return Q;
 }

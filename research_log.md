@@ -192,3 +192,139 @@ nearest bank patch 0.083 / 7.45 · flat CMA 1 seed 0.302 / 6.05 · flat 2-seed a
 Reading: the kNN start dominates (flattered — targets are jitters of bank anchors, so nn often finds the parent; err 0.083 ≈ the 0.08σ jitter). Refinement lowers sound error but doubles knob error: CMA wanders in insensitive knobs (≈20/73 live knobs move loss < 0.05 for a 10% move — exp_landscape t0), so unweighted knob error overstates harm; sensitivity-weighted error is the better knob metric next time. 2-seed averaging doesn't pay at this budget (it halves iterations). Even at the truth seed, refined fits sit ~5 where 0 is reachable: the landscape is hard to search from a merely-close start. Strongest lever: a better start → learned inverse model (genopatch) once on power.
 
 **Refinement from the same kNN start (5 engine targets, 800 renders, sound err vs truth at same seed).** CMA all live 4.98 (3.38 4.82 7.23 6.56 4.98) · CMA top-30 sensitive 5.08 · **coordinate descent 4.36** (1.98 3.87 5.01 5.03 4.36) — wins 5/5 despite spending ~150 renders on the sensitivity scan. Near a good start, knobs act mostly independently; CMA at λ≈16 in ~70 dims can't learn its covariance in 800 renders. n=5 — enough to change the default, not enough to call it robust. Next: CD with sensitivity re-scan per cycle, CD→CMA hybrid, and the same comparison on real snares with CLAP fit↔target as the judge (needs GPU/power).
+
+## 2026-10-08 (evening, on power) — Genopatch v1: a learned inverse model
+
+**Why.** The battery-session lab showed a good start matters more than the search; the kNN bank was the zero-training start. A learned audio→knobs model is the real version (Synplant-2 Genopatch).
+
+**Data.** 234k snare-engine patches (45% anchors ±0.08σ, 25% ±0.18σ, 20% hand flavors, 10% uniform), random note/seed, each with a 64-frame × 48-band log-mel (10 ms hop, dB re peak, −80 floor). fit/gen_data.js, 13 processes, ~11 min.
+
+**Model.** 3.3M-param CNN → sigmoid regression for 88 continuous knobs (loss masked for knobs of off layers) + softmax heads for 11 switches/note. 14 epochs on MPS, ~11 min. Val knob MAE 0.0955 vs 0.2035 for a median guess. Best-recovered: noise width, even, air shelf, clap level, time, tone/noise timing; worst: clap gap/Q/drive, metal tune/spread/bright, click pitch. Switch accuracy 0.61–0.81; **note pitch class 0.21** (chance 0.08) — 48 mel bands can't resolve semitones at ~200 Hz. Input design flaw; v2 needs a pitch-resolving input.
+
+**Eval (fit/eval_inv.js, 800 renders, coordinate-descent refinement; loss v2).** 40 held-out engine targets (sound err vs truth @ seed 1) / 30 unseen real snares (loss):
+model only 4.47 / 11.98 · bank only 5.26 / 8.75 · model+CD 3.77 / 4.83 · model(+pitch estimate)+CD 3.72 / **4.75** · bank+CD 3.71 / 5.09 · best-of-both+CD 3.77 / 4.93.
+**CLAP fit↔target on the 30 real snares**: bank only 0.227, bank+CD 0.209, model+CD 0.193, **model+pitch+CD 0.182**; old staged fitter 0.288 (different snares); nearest *other* real snare 0.057.
+
+**Reading.** On engine targets the model alone beats the bank; after refinement all start points tie (~3.7). On real snares the model alone is bad (11.98, worse than the bank): a domain gap — real sounds sit outside the synthetic distribution and the net extrapolates wildly. As a *start* for refinement it still wins (4.75 vs 5.09; CLAP 0.182 vs 0.209). Fits remain further from their own targets than a random neighbouring real snare is — not "sounds like the original" yet.
+
+**Next.** Self-training: fit the 4030-snare library with model+pitch+CD, add those patches (± small jitter) to the training mix, retrain — the distribution moves onto real sounds. Plus a pitch-resolving input (CQT-like low band, or explicit f0 feature).
+
+## 2026-10-08 late — Rolling from the library: genes, crossover, jitter (exp_genes.js, clap_rolls.py)
+
+**Question.** With ~3k real snares fitted into knob space (self-training round, still running), what's the best way to *roll new* snares? Candidates: Gaussian over the fits (PCA "genes"), crossover/blend between fits (GA-style), jitter around fits, current app mix (158 family anchors ±0.08 + hand flavors). Split by file hash: half the fits build the prior, the other half's *real recordings* are the reference — so a roll can't score well by copying the exact sample it's judged against.
+
+**Metrics.** precision = roll → nearest unseen real; recall = unseen real → nearest roll (coverage); diversity = mean pairwise roll distance. Two independent spaces: mel fingerprint (edist, same family as the fitter's loss) and CLAP (independent ear).
+
+**Genes.** PCA over normalized continuous knobs is flat: 62 of 88 components for 90% variance, top component only 6%. Gene 0 reads as "tight vs long" (+bus snap, −decays). No low-dim linear structure — expected-ish, since off-layer knobs carry junk and layer on/off is multimodal. Gaussian sampling (full or top-62) lands mid-pack; crossover and midpoint blending (nonlinear, stay between real points) beat it.
+
+**Seed noise warning.** Reordering the RNG moved medians by ±0.4 at N=150 (flavors 5.57 → 5.99). Only trust the big gaps; the A/B below used N=300 × 2 seeds.
+
+**App A/B (edist, N=300, two seeds, consistent):** before 6.49/6.41 precision, 6.50/6.76 recall; library mix 6.03/6.07, 6.01/6.02. Real-vs-real 5.0–5.3.
+**CLAP triangulation:** real-vs-real 0.084; before precision 0.129 / recall 0.154 / diversity 0.369; library 0.101 / 0.138 / 0.327 (real diversity 0.367). Gap to real closes ~60%. Both metrics agree.
+
+**Jitter sweep (CLAP, N=200):** sd 0.05 → 0.103 / 0.148 / 0.320; 0.08 → 0.117 / 0.153 / 0.349; 0.12 → 0.120 / 0.151 / 0.345; 0.16 → 0.138 / 0.156 / 0.406. Diversity rises with jitter, recall doesn't move, precision degrades. **Jitter buys off-manifold variety, not coverage.** Coverage comes from *more anchors*. Implication for the bigger vision (lane = engine + folder-derived prior): every reference folder fitted widens real territory; knob noise only blurs it.
+
+**Shipped (local):** `rollSnareLibrary` (60% fit ±0.05, 40% layer-wise cross of two fits), web/snare_lib.json (values only), snare randomize = 80% library / 10% family anchors / 10% flavors.
+
+**Bug found on the way:** `rollSnareAnchored` spread the anchor over P before checking locks, so locked snare groups were overwritten — and per-group "roll" (which locks all other groups) re-rolled the whole snare 75% of the time. Fixed with `relock`.
+
+## 2026-10-09 ~00:00–01:00 — Exact descriptors find the soft front; the hit layer
+
+**Why.** Lyra: "embeddings are sorta roughly useful but they discard a lot of exact information we care about." True, and our own calibration said so — CLAP barely registers a big EQ move (0.001). So: named, exact descriptors (fit/descriptors.js) — body pitch, attack time, noise-peak time, decay −20/−40 broadband and per band, band energy shares, 1–2 kHz formant, early/late centroid, crest (100 ms), snap (energy in first 3 ms / first 30 ms), front HF share (>8 kHz in the first ~10 ms). Compared as distributions (W1 / real IQR) and as fit-vs-own-source pairs.
+
+**Distribution gap, rolls vs 525 unseen real (exp_desc.js).** Decays, formant, late centroid, noise-peak timing: fine (≤0.1 IQR). Systematic misses in every roll config: attack (real median 2.5 ms, rolls 8–12), snap (0.11 vs 0.07), crest (9.1 vs 7.5 dB), less 100–400 Hz body, higher pitch, brighter clicks. Same shape as Lyra's chug complaint: transient inset rather than at the front.
+
+**Paired, fit vs its own source (387 pairs, exp_desc_pairs.js).** Spectral balance nailed (every band share within ~1 dB median). The transient is the failure: snap −0.05 median (half), attack p90 +31 ms, front HF +3 dB, octave errors in pitch at p90. Diagnosis: mel frames weigh time uniformly, so the first 3 ms is ~2 frames out of hundreds — nearly free to get wrong. Rolls inherit the fits.
+
+**Loss term (exp_transient.js; 30 worst-snap fits, warm start, +300 CD evals, v2 control at the same budget).** v5 = v2 + TW × L1 of a 0.5 ms log-RMS envelope over the first 40 ms. Control: snap 0.02 (real 0.28), attack err 10.2 ms, crest −2.3. TW 0.3: snap 0.11, attack 4.7, crest −0.05, v2 loss +0.06 (free). TW ≥ 0.6 starts trading body (100–400 Hz) and pitch for transient.
+*Bug on the way:* first run of the arms used `set -- $a` in zsh, which doesn't word-split — all arms ran v2. Caught because the logs printed the whole string as the arm name.
+
+**Why snap capped at ~0.11: the engine had nothing responsible for the first 2 ms.** 64% of library fits push the click >5 ms past onset (median delay 8.3 ms, length 6.7 ms) — the click plays the wire burst, not the stick. Envelopes (RMS per ms) make it plain: real high-snap snares sit at full level for 3–6 ms and fall 10–15 dB by 40 ms; v2 fits are flat or *rising* — clipped bodies held at the ceiling. A clipped body has no envelope above the clip point, so nothing *below* the bus clipper can stand 10 dB proud of it.
+
+**Hit layer (dsp/snare.js, group `sn_hit`).** Noise burst at t = 0.25 ms, flat for its length (0.5–10 ms) then a fast fall, color (LP/HP tilt), drive (tanh), level −60…+12 dB *relative to the clipped body's peak* — mixed **after** the bus clipper, so the final normalization drops the body under it. Off by default; renders with it off are bit-identical (verified). Two false starts, both from not looking at data first: (1) a 1-sample tick — carries no energy, snap counts energy; (2) the tick was also being erased by my own 1 ms de-click fade-in. That fade-in also softened the first ms of *every* snare; snares now fade in over 0.15 ms (other engines keep 1 ms). Render change from that: 1.7e-5 relative.
+
+**With the hit (worst 30):** TW 0.3 + hit → snap 0.23/0.28, attack err 1.8 ms, hit used in 23/30, v2 loss unchanged (4.91). But front HF +17.7 dB: the broadband envelope can't see color. v6 = envelope split into two bands; a one-pole 3 kHz split was too gentle (16.3). Steep 6 kHz split (2× biquad each side) + hit starting dark (−0.5): **v6s — v2 loss 4.86 (control 4.85), snap 0.22, attack err 1.9 ms, crest +0.6, front HF +7.3 (control +10.7).** Pareto over the control. TW 0.5 buys HF (+4.6) for +0.12 v2 loss and worse pitch.
+
+**Open:** fronts are still brighter than real — and that predates the hit (control already +10.7). Overall 8–20 kHz share matches within ~1 dB, so fits put brightness at the front and are too dark in the tail; real snares run darker stick → brighter wires. Candidates: clipping harmonics from the bus at high drive, the click layer at 5–12 kHz.
+
+**Shipped.** Production fitter (dsp/fitstages.js): snare loss + 0.3 × two-band front envelope from the onset; a `hit` stage after `click`. Tested on two held-out reals: snap/attack land near the source. Library polish with v6s + hit running (300 evals, all 3,989).
+
+**Bright-front ablation (v6s fits, n=30, median front-HF error vs real, dB):** fit 9.0; hit off 10.3; click off 8.7; bus drive 0 9.2; noise off 6.7; metal+clap off 9.0; tone off 9.4; air shelf 0 7.7. No single culprit — brightness is distributed (noise layer and air shelf the largest contributors). That makes it a loss problem (the first ~10 ms barely counts spectrally), not a knob problem.
+
+**Pipeline queued (unattended):** polish → web/snare_lib.json from polished fits → v2 data (14 × 13k; 30% library ±0.04 with half keeping the fitted note, 25% library ±0.12, 20% family anchors, 17% flavors, 8% uniform; mel + 180-bin pitch spectrum) → train_inv2 (mel CNN + 1-D pitch branch) → eval_inv2 on the same 30 real / 40 synthetic held-out targets, CD 800 under v6, judged by spectral loss, front loss, and exact descriptors. Expectation, written before seeing it: v2 beats v1 on pitch error clearly (pitch-class accuracy was 0.21 in v1), modestly on spectral loss after CD, and on front loss because the library it learns from now has hits. What would change my mind: v2 no better on pitch → the pitch spectrum isn't informative as built (the earlier sanity check showed the peak drifts from the note via tune/pitch-bend).
+
+## Pipeline results: polished library, inverse model v2, roll A/B (overnight)
+
+**Polish (v6 loss + hit layer, 300 evals, warm from first-pass fits).** 3989/3989, 0 errors. Median v2 (mel) loss 5.07 → 5.10: a hair worse on the metric it no longer optimizes, as expected when trading some mel fit for the front envelope. Hit layer ends up on in 54% of fits — so roughly half the library genuinely wants a front edge the old layers couldn't make. 3752 kept (v2 < 7) → web/snare_lib.json.
+
+**Inverse v2 (mel + 180-bin log-pitch branch, 182k samples from polished library).** Val knob MAE 0.124; switch CE bottoms at ep 5 then rises (switch heads overfit — the continuous heads don't). note_pc accuracy 0.25 vs v1's 0.21. Eval (40 synthetic, 30 real held-out, 800-eval CD after, v6 loss), medians:
+
+| real | spec | front | snap | attack ms | front HF dB | pitch-class err ct | within 50ct |
+|---|---|---|---|---|---|---|---|
+| v1+pitch only | 12.0 | 8.25 | .062 | 7.4 | +1.1 | 227 | .13 |
+| v2 only | 10.0 | 7.67 | .090 | 8.7 | −0.1 | 210 | .17 |
+| v2+pitch only | 10.0 | 7.40 | .093 | 8.9 | −0.2 | 160 | .13 |
+| v1+pitch + CD | 4.62 | 4.05 | .035 | 5.2 | +2.6 | 128 | .30 |
+| v2 + CD | 4.67 | 3.75 | .065 | 7.2 | 0.0 | 119 | .30 |
+| v2+pitch + CD | 4.88 | 4.08 | .058 | 4.3 | 0.0 | 97 | .30 |
+
+Pre-registered expectation was "v2 clearly better on pitch, modestly on spectral, better on front". Verdict: **pitch — not confirmed.** Within-50-cents rate is 0.30 for every arm after CD; the pitch branch moved note_pc from 0.21 to 0.25, nowhere near useful. Spectral: v2 raw guesses are clearly better on real snares (12.0 → 10.0), but CD erases it (4.62 vs 4.67; v2 wins 17/30 paired). Front: small win (4.05 → 3.75). The one clean surprise: front HF bias goes from +2.6 dB to 0.0 — the v2 model, trained on polished data, starts in a basin with a darker front and CD keeps it there. That's the bright-front problem partly solved by data rather than loss.
+
+Why pitch fails, candidates: (a) the training labels are noisy — library fits pick a note even when the tone layer is buried, so "note" is unidentifiable for half the data and the head learns the prior; (b) the pitch descriptor I score with is itself unreliable on noisy snares, so the eval's pitch column partly measures the ruler. (a) predicts note_pc accuracy rises sharply when restricted to samples with loud tone layers — cheap to check next. Not worth porting v2 to the browser as-is: after the fit button's refinement it's a tie, and it's 4.5M params.
+
+**Roll A/B: first-pass library vs polished library vs old randomize** (200 rolls each, sd 0.05, held-out half):
+- Exact descriptors, summed W1/IQR gap to real: old 5.13, first-pass fits 4.58, **polished 3.26**. Attack median 10.5 → 6.0 ms (real 3.2), crest 7.2 → 8.8 dB (real 8.8), snap 0.06 → 0.10 (real 0.11), decays and air band now within noise of real. Remaining gaps: snap/attack *spread* (median OK, tails not), click_hf still +4.5 dB bright, pitch high.
+- CLAP: real-vs-real 0.076; old 0.102/0.163, fits 0.108/0.146, polish 0.105/0.143 (precision/recall). All within ~±0.005 run-to-run noise — CLAP can't see the difference.
+
+The methods disagree, and the disagreement is the finding: everything the polish fixed lives in the first 10–20 ms and in crest/attack, which is exactly what CLAP's embedding throws away. Lyra's "embeddings discard exact information we care about" is now measured, not asserted. (Also note the "old" arm here scores better on CLAP than the earlier "before" arm did — that earlier arm went through roll.js best-of-K with different mixing, so they aren't the same sampler; don't compare across.)
+
+Shipped locally: web/snare_lib.json now holds the 3752 polished fits.
+
+### Why the pitch head can't learn: note is a gauge freedom
+Checked hypothesis (a) — "note labels are noisy when tone is buried" — on a fresh synthetic test set (3000, seeds 9100–9103) where labels are exact. Effective tone pitch-class accuracy (<50 ct) by true tone level: 0.12 at −60..−40 dB rising only to **0.26 at −2..+7 dB**. A loud tone at an exactly known pitch should be near-trivial, so (a) is not the story. The feature itself is fine-ish: argmax of the 180-bin pitch spectrum lands within 50 ct (pc-folded) of the true f0 45% of the time on loud tones — better than the network. So the information is in the input and the network isn't extracting it.
+
+Reason, found in the engine: `note` feeds tone (`shellMidi(note, oct) + sn_t_tune`), metal (`baseHz` with `sn_m_oct`, `sn_m_tune`) and noise ring (`note + sn_n_ring_st`), and every one of those has its own offset knob with ≥12 st of range. So shifting note by k and every offset by −k is an exact symmetry — verified: 38 random library patches re-gauged render **bit-identical** (max rel diff 0). The training target `note_pc` is pure gauge: for any sound, all 12 classes are equally correct given compensating tunes, and cross-entropy on it can only learn the sampler's prior. The tune regressions inherit the same ambiguity (MAE on sn_t_tune is meaningless). This is the classic non-identifiable-parameterization trap in inverse problems, and it was invisible in every aggregate metric — it only surfaced by asking a specific question of exact labels.
+
+Fix: fit/canon.js — canonical gauge where note's pitch class = the tone's sounding pitch class and |sn_t_tune| ≤ 0.5 st; metal tune/oct and ring interval compensated. Applied to all 185k training labels (137k moved, 10k left as-is where the compensating octave would leave range). Retraining same architecture → out/gp3/inv2c.pt. Prediction: effective pitch-class accuracy on loud tones should jump from 0.26 toward the ~0.45+ the raw feature argmax gets, ideally well past it. If it doesn't move, the gauge wasn't the bottleneck and the pitch branch architecture is (e.g. the MaxPool → Linear flattening).
+Open refinement: when the tone layer is silent, metal is the identifiable pitch, and the gauge should be fixed by it instead.
+**Result (gauge fix):** same architecture, same data, only labels re-gauged. Synthetic test (3000, unseen seeds), effective tone pitch-class within 50 ct, by true tone level:
+
+| tone dB | old | canon |
+|---|---|---|
+| −60..−40 | .12 | .12 |
+| −40..−25 | .09 | .26 |
+| −25..−15 | .11 | .31 |
+| −15..−8 | .14 | .40 |
+| −8..−2 | .13 | .45 |
+| −2..+7 | .26 | **.58** (median err 137 → 38 ct) |
+
+sn_t_tune MAE becomes the best-recovered knob (0.023). Silent tone stays at chance-ish (.12 vs 1/12 = .083), which is the correct null: the metric isn't leaking. The prediction held, and the monotone rise with tone level is the shape you'd expect if the network is now actually reading pitch. ring_st accuracy dropped to 0.26 — expected, it now carries the compensation and is gauge-noise when the noise ring is off/quiet. Same fix should apply to metal (m_tune worst-recovered now) — gauge by the louder pitched layer. Running the real-snare eval with this model.
+**Real-snare eval, re-gauged v2** (30 held-out real, medians; old-v2 numbers in parens):
+- Raw guess, v2 only: spec 9.15 (10.0; v1 12.0), front 6.74 (7.67; v1 8.25), pitch-class <50 ct 0.33 (0.17; v1 0.13). The gauge fix improved *everything* in the raw guess, not just pitch — consistent with the ambiguous note target having been injecting gradient noise into the shared trunk.
+- After 800-eval CD: spec 4.57 vs v1 4.62 (15/30 paired wins — a tie), front 3.82 vs 4.05, pitch <50 ct 0.43 vs 0.30 (13 vs 9 snares; weak at n=30).
+- Retraction: the earlier "front HF bias +2.6 → 0.0 dB" for old v2+CD does not replicate — re-gauged v2+CD shows +1.0, and the two v2 runs differ only in labels. At n=30 that column is noise-level; don't build on it.
+
+Reading: the model is now a genuinely better *starting point* (raw spectral loss −24% vs v1, pitch class 2.5× better), but an 800-eval CD from either start lands in about the same place. The value of v2 therefore lives in short-budget fits — the browser fit button, live "fit this as I drag it in" — not in the offline polish. Next test that would decide porting: same eval at budget 100–200.
+**Budget 150:** CD barely starts in 150 evals (one partial coordinate sweep over 103 knobs — v2 rows are unchanged from the raw guess, v1 only moves 12.0 → 11.6). So at this budget the start *is* the answer: re-gauged v2 beats v1 on spectral loss 20–22/30 real snares (9.0 vs 11.6) and on front 23/30. Combined with the 800 tie: v2's whole value is the start point, and it's large where the refinement budget is small. That argues for porting it to the browser as the fit button's first stage (4.5M params, ~18 MB f32 / ~4.5 MB int8 — fine for a local tool, needs a JS conv forward or onnxruntime-web).
+
+## Bright fronts: a front-spectrum term (v7)
+v7 = v6 + SW × L1 over a 12-band log spectrum (100 Hz–20 kHz, dB re total) of the first 512 samples. Same 30 worst-transient fits, same warm starts and hit init as v6s; control re-run reproduces v6s exactly (deterministic, good).
+
+| arm | SW | v2 mel loss | front env | snap (real .28) | attack err | front HF err dB |
+|---|---|---|---|---|---|---|
+| v6 | 0 | 4.86 | 4.22 | .22 | 1.9 | +7.3 |
+| v7a | 0.1 | 4.91 | 4.21 | .21 | 1.9 | +4.0 |
+| v7b | 0.3 | 5.11 | 4.20 | .18 | 2.4 | +1.6 |
+| v7c | 1.0 | 5.49 | 4.48 | .18 | 2.2 | +0.8 |
+
+Clean dose-response, and a real tradeoff: the HF error falls monotonically while mel loss rises. Caveat on circularity: click_hf (8–20 kHz share of the first 512 samples) lives in the same window the new term targets, so its improvement is partly by construction; the independent judges here are mel loss (gets worse) and snap/attack (slightly worse at SW ≥ 0.3). SW 0.1 is nearly free (+0.05 mel) and halves the error — that's the default I'd take. Pushing harder means the engine can't make a dark front *and* the right mel at the same time, which points back at the engine (noise layer + air shelf both brighten the front; there's no "front darkness" control except the hit's color) rather than at the loss.
+
+## Browser fit: inverse model as stage 0, and speed
+**Port.** inv2c exported to ONNX (web/inv2.onnx, 18 MB f32), run in the fit worker via onnxruntime-web (CDN wasm). dsp/invfeat.js reproduces the training features byte-for-byte (0 mismatched bytes over 10 renders). fitTo takes `guess` and starts from whichever of {model guess, shell-pitch init} has lower loss; the guess is posted to the UI as soon as it exists (~200 ms; ~1.3 s on first model load).
+Headless Chrome A/B, 3 held-out real snares, scale 0.15 (short budget), same loss: model start 8.92 / 9.23 / 8.91 vs pitch-init 17.45 / 26.89 / 21.25. At this budget the pitch-init path barely moves off its start (levels stage leaves loss unchanged), so the comparison is mostly "model guess + a little" vs "init + a little" — consistent with the offline budget-150 result. n=3, but the gap is ~2×, every time. Model-start fits take longer wall-clock (48 vs 32 s on snare 1) because the guess turns on more layers (hit/metal/clap), so more stages run and renders cost more.
+
+**Speed.** Profile of one fit eval (render + loss), 30.9 ms: render 79%. Two V8 traps fixed, renders bit-identical: `Float32Array.from(x, fn)` for layer gains (21% of all time!) → in-place loop; reverb IR spectrum recomputed every eval despite the IR being cached → WeakMap'd spectrum. 30.9 → 22.7 ms. Tried a table-twiddle FFT twice (two loop orders): 23.8 and 31.0 ms — worse; the recurrence version is already cache-friendly at these sizes; reverted. WASM estimate: ≤2× on these loops (biquads are serial recursions, SIMD doesn't bite), not worth an engine rewrite before parallelism.
+Parallelism: cmaes got a `fBatch` path (whole generation at once; RNG sequence unchanged → fit is bit-identical to the sync path, verified). dsp/pool.js drives helper workers synchronously from inside the fit worker via SharedArrayBuffer + Atomics.wait, so the staged fitter is untouched. Needs cross-origin isolation (serve.js now sends COOP same-origin + COEP credentialless); falls back to single-thread without it.
+First pool attempt deadlocked (headless run hung 30 min): the fit worker created helpers and immediately blocked in Atomics.wait for their ready flags — Chrome finishes nested-worker startup on the parent's event loop, so they never came up. Fix: async startup (await ready messages, 15 s timeout → single-thread), then synchronous batches; a batch that stalls 20 s finishes locally. Result, same snare, scale 0.05, model start: pool (10 helpers on 16 logical cores) **5.7 s vs 33.1 s single-thread = 5.8×, bit-identical fit** (same loss 10.2566, same param checksum). Cap is λ/⌈λ/size⌉ plus serial CMA bookkeeping (eigendecomposition per generation).
+Default fit button (scale 0.6), 3 held-out snares: first sound (model guess) at 120–200 ms; full fit 9–44 s; final loss 7.49 / 9.08 / 8.27.
+Idea queue: with spare cores, raise λ when pooled (bigger populations are more robust on multimodal stages) — costs no wall-clock up to the pool size.

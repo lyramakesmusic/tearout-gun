@@ -1,5 +1,5 @@
 // Fitting math shared by offline scripts and the browser worker: multi-resolution log-mel, losses, CMA-ES.
-import { fft } from './engine.js';
+import { fft, biquad, SR } from './engine.js';
 // ---------------------------------------------------------------- log-mel
 const melCache = new Map();
 function melBank(nfft, sr, nmel, fmin, fmax) {
@@ -158,7 +158,7 @@ function eigSym(A) { // Jacobi
   return { d: a.map((r, i) => Math.max(1e-20, r[i])), V };
 }
 
-export function cmaes(f, x0, { sigma = 0.25, maxEvals = 2000, seed = 1, lambda, onGen } = {}) {
+export function cmaes(f, x0, { sigma = 0.25, maxEvals = 2000, seed = 1, lambda, onGen, fBatch } = {}) {
   const r = (() => { let a = seed >>> 0 || 1; return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();
   const n = x0.length, lam = lambda || 4 + Math.floor(3 * Math.log(n)), mu = Math.floor(lam / 2);
   let w = Array.from({ length: mu }, (_, i) => Math.log(mu + 0.5) - Math.log(i + 1)); const ws = w.reduce((a, b) => a + b); w = w.map((x) => x / ws);
@@ -176,10 +176,10 @@ export function cmaes(f, x0, { sigma = 0.25, maxEvals = 2000, seed = 1, lambda, 
       const y = B.map((row) => row.reduce((s, b, j) => s + b * D[j] * z[j], 0));
       const x = m.map((mi, i) => mi + sigma * y[i]);
       const xc = clip(x), pen = x.reduce((s, v, i) => s + (v - xc[i]) ** 2, 0);
-      const fx = f(xc) + 10 * pen; evals++;
-      if (fx < best.f) best = { x: xc, f: fx };
-      pop.push({ x, y, f: fx });
+      pop.push({ x, y, xc, pen, f: fBatch ? 0 : f(xc) });
     }
+    const fs = fBatch ? fBatch(pop.map((p) => p.xc)) : null; // a whole generation at once (parallel evaluation)
+    pop.forEach((p, k) => { p.f = (fs ? fs[k] : p.f) + 10 * p.pen; evals++; if (p.f < best.f) best = { x: p.xc, f: p.f }; });
     pop.sort((a, b) => a.f - b.f);
     const old = m.slice();
     m = Array.from({ length: n }, (_, i) => pop.slice(0, mu).reduce((s, p, k) => s + w[k] * p.x[i], 0));
@@ -244,3 +244,20 @@ export function tobLoss(x, tTob, sr) {
   for (let i = 0; i < a.length; i++) s += Math.abs(Math.max(a[i], -60) - Math.max(tTob.db[i], -60));
   return s / a.length;
 }
+// ---------------------------------------------------------------- transient
+// the front of a sound: 80 × 0.5 ms log-RMS frames from the start of x, dB re peak (pk, or x's own), floored at −60
+export function tenv(x, pk0 = 0) { let pk = pk0 || 1e-9; if (!pk0) for (const v of x) pk = Math.max(pk, Math.abs(v)); const o = new Float32Array(80); for (let f = 0; f < 80; f++) { let s = 0; for (let i = 0; i < 24; i++) s += (x[f * 24 + i] || 0) ** 2; o[f] = Math.max(-60, 10 * Math.log10(s / 24 / (pk * pk) + 1e-12)); } return o; }
+export function tenvLoss(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; }
+// the front split at 6 kHz (4th order), both bands re the whole signal's peak: its color counts too
+export function tenv2(x, split = 6000) { let pk = 1e-9; for (const v of x) pk = Math.max(pk, Math.abs(v)); const m = Math.min(x.length, 80 * 24), lo = Float32Array.from(x.subarray(0, m)), hi = Float32Array.from(x.subarray(0, m)); for (let k = 0; k < 2; k++) { biquad(lo, 'lp', split, 0.707, 0, SR); biquad(hi, 'hp', split, 0.707, 0, SR); } const o = new Float32Array(160); o.set(tenv(lo, pk)); o.set(tenv(hi, pk), 80); return o; }
+export const tenv2Loss = tenvLoss;
+// spectrum of the first ~10.7 ms: 12 log bands 100 Hz–20 kHz, dB re the window's total energy
+export function fspec(x) {
+  const N = 512, re = new Float64Array(N), im = new Float64Array(N);
+  for (let i = 0; i < Math.min(N, x.length); i++) re[i] = x[i] * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N));
+  fft(re, im, false);
+  const o = new Float32Array(12); let tot = 1e-18; const pw = new Float64Array(N / 2); for (let k = 1; k < N / 2; k++) { pw[k] = re[k] ** 2 + im[k] ** 2; tot += pw[k]; }
+  for (let b = 0; b < 12; b++) { const lo = 100 * 200 ** (b / 12), hi = 100 * 200 ** ((b + 1) / 12); let s = 1e-18; for (let k = Math.max(1, Math.floor((lo * N) / SR)); k <= Math.min(N / 2 - 1, Math.ceil((hi * N) / SR)); k++) s += pw[k]; o[b] = Math.max(-60, 10 * Math.log10(s / tot)); }
+  return o;
+}
+export const fspecLoss = tenvLoss;

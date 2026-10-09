@@ -28,6 +28,12 @@ export const SNARE_SPEC = [
   S('sn_tone', 'sn_t_fold', 'fold', 0, 1, 0),
   S('sn_tone', 'sn_t_delay', 'delay', 0, 60, 0, 'lin', 'ms'),
 
+  // HIT — the front edge, locked to the onset
+  S('sn_hit', 'sn_h_lvl', 'level', -60, 12, -60, 'lin', 'dB'),
+  S('sn_hit', 'sn_h_color', 'color', -1, 1, 0.3),
+  S('sn_hit', 'sn_h_len', 'length', 0.5, 10, 3, 'log', 'ms'),
+  S('sn_hit', 'sn_h_drive', 'drive', 0, 30, 12, 'lin', 'dB'),
+
   // CLICK — the first few ms
   S('sn_click', 'sn_c_lvl', 'level', -60, 6, -6, 'lin', 'dB'),
   S('sn_click', 'sn_c_type', 'type', 0, 4, 3, 'int', 'click/bleeps/zap/burst/snap'),
@@ -119,6 +125,6 @@ export const SNARE_SPEC = [
   S('sn_bus', 'sn_b_snap', 'snap', 0, 12, 3, 'lin', 'dB'),
 ];
 
-export const SNARE_GROUPS = [['sn_click', 'click'], ['sn_tone', 'tone'], ['sn_noise', 'noise'], ['sn_metal', 'metal'], ['sn_clap', 'clap'], ['sn_room', 'room'], ['sn_width', 'width'], ['sn_bus', 'bus']];
-export const SNARE_LEVEL = { sn_click: 'sn_c_lvl', sn_tone: 'sn_t_lvl', sn_noise: 'sn_n_lvl', sn_metal: 'sn_m_lvl', sn_clap: 'sn_k_lvl', sn_room: 'sn_r_lvl' };
-export const SNARE_STEMS = [['click', 'sn_c_lvl'], ['tone', 'sn_t_lvl'], ['noise', 'sn_n_lvl'], ['metal', 'sn_m_lvl'], ['clap', 'sn_k_lvl'], ['room', 'sn_r_lvl']];
+export const SNARE_GROUPS = [['sn_hit', 'hit'], ['sn_click', 'click'], ['sn_tone', 'tone'], ['sn_noise', 'noise'], ['sn_metal', 'metal'], ['sn_clap', 'clap'], ['sn_room', 'room'], ['sn_width', 'width'], ['sn_bus', 'bus']];
+export const SNARE_LEVEL = { sn_hit: 'sn_h_lvl', sn_click: 'sn_c_lvl', sn_tone: 'sn_t_lvl', sn_noise: 'sn_n_lvl', sn_metal: 'sn_m_lvl', sn_clap: 'sn_k_lvl', sn_room: 'sn_r_lvl' };
+export const SNARE_STEMS = [['hit', 'sn_h_lvl'], ['click', 'sn_c_lvl'], ['tone', 'sn_t_lvl'], ['noise', 'sn_n_lvl'], ['metal', 'sn_m_lvl'], ['clap', 'sn_k_lvl'], ['room', 'sn_r_lvl']];
