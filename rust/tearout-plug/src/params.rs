@@ -1,0 +1,124 @@
+// Host-facing parameters. Every engine knob is a host parameter (normalized 0..1, shown in its own units),
+// plus the play-side controls.
+use nih_plug::prelude::*;
+use nih_plug_egui::EguiState;
+use std::sync::Arc;
+use tearout_dsp::{from_norm, to_norm, Scale, Spec, N, SPEC};
+
+pub struct GunKnobs {
+    pub p: Vec<FloatParam>,
+}
+
+pub fn group_name(g: &str) -> &'static str {
+    match g {
+        "global" => "global",
+        "sub" => "sub",
+        "tr" => "transient",
+        "body" => "body",
+        "synth" => "synth",
+        "spice" => "spice",
+        "rev" => "reverb",
+        "crunch" => "crunch",
+        "master" => "master",
+        "burst" => "burst",
+        g if g.starts_with("sample") => "samples",
+        _ => "other",
+    }
+}
+
+pub fn fmt_value(s: &Spec, v: f64) -> String {
+    if s.unit.contains('/') {
+        let opts: Vec<&str> = s.unit.split('/').collect();
+        let i = (v.round() as i64 - s.min as i64).clamp(0, opts.len() as i64 - 1) as usize;
+        return opts[i].to_string();
+    }
+    match s.unit {
+        "Hz" if v >= 1000.0 => format!("{:.1} kHz", v / 1000.0),
+        "Hz" => format!("{:.0} Hz", v),
+        "ms" if v >= 100.0 => format!("{:.0} ms", v),
+        "ms" => format!("{:.1} ms", v),
+        "dB" => format!("{:+.1}", v).replace('-', "−"),
+        "st" => format!("{:.0} st", v),
+        "midi" => note_name(v),
+        _ if s.scale == Scale::Int => format!("{:.0}", v),
+        _ => format!("{:.2}", v),
+    }
+}
+
+pub fn note_name(m: f64) -> String {
+    const NAMES: [&str; 12] = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+    let m = m.round() as i64;
+    format!("{}{}", NAMES[m.rem_euclid(12) as usize], m.div_euclid(12) - 1)
+}
+
+impl Default for GunKnobs {
+    fn default() -> Self {
+        let pre = &crate::presets::all()[crate::presets::default_index()].p;
+        let p = SPEC
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let s2 = *s;
+                let mut fp = FloatParam::new(format!("{} {}", group_name(s.group), s.label), to_norm(s, pre.0[i]) as f32, FloatRange::Linear { min: 0.0, max: 1.0 })
+                    .with_value_to_string(Arc::new(move |u| fmt_value(&s2, from_norm(&s2, u as f64))));
+                if s.scale == Scale::Int && s.max > s.min { fp = fp.with_step_size(1.0 / (s.max - s.min) as f32); }
+                fp
+            })
+            .collect();
+        Self { p }
+    }
+}
+
+unsafe impl Params for GunKnobs {
+    fn param_map(&self) -> Vec<(String, ParamPtr, String)> {
+        SPEC.iter().zip(&self.p).map(|(s, fp)| (s.id.to_string(), fp.as_ptr(), group_name(s.group).to_string())).collect()
+    }
+}
+
+impl GunKnobs {
+    /// Current patch in engine units.
+    pub fn snapshot(&self) -> tearout_dsp::Params {
+        let mut out = tearout_dsp::Params::default();
+        for i in 0..N { out.0[i] = from_norm(&SPEC[i], self.p[i].value() as f64); }
+        out
+    }
+}
+
+#[derive(Params)]
+pub struct PlugParams {
+    #[persist = "editor-state"]
+    pub editor_state: Arc<EguiState>,
+    #[persist = "preset"]
+    pub preset: Arc<std::sync::RwLock<String>>,
+
+    #[nested(group = "gun")]
+    pub gun: GunKnobs,
+
+    /// How far a new note pulls earlier notes down (0 = rings, 1 = cut).
+    #[id = "duck"]
+    pub duck: FloatParam,
+    #[id = "duck_rel"]
+    pub duck_rel: FloatParam,
+    #[id = "vel"]
+    pub vel: FloatParam,
+    /// Dice: while on, every note re-rolls the patch inside the dice ranges.
+    #[id = "dice"]
+    pub dice: BoolParam,
+    #[id = "dice_amt"]
+    pub dice_amt: FloatParam,
+}
+
+impl Default for PlugParams {
+    fn default() -> Self {
+        Self {
+            editor_state: EguiState::from_size(crate::editor::W as u32, crate::editor::H as u32),
+            preset: Arc::new(std::sync::RwLock::new(String::new())),
+            gun: GunKnobs::default(),
+            duck: FloatParam::new("duck", 0.7, FloatRange::Linear { min: 0.0, max: 1.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),
+            duck_rel: FloatParam::new("duck release", 120.0, FloatRange::Skewed { min: 5.0, max: 2000.0, factor: 0.3 }).with_unit(" ms").with_value_to_string(Arc::new(|v| format!("{:.0}", v))),
+            vel: FloatParam::new("velocity", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),
+            dice: BoolParam::new("dice", false),
+            dice_amt: FloatParam::new("dice amount", 0.35, FloatRange::Linear { min: 0.0, max: 1.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),
+        }
+    }
+}
