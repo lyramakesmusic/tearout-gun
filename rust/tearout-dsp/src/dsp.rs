@@ -72,8 +72,71 @@ pub fn active_len(sr: f64, att: f64, hold: f64, rel: f64) -> usize { (((att + ho
 #[derive(Clone, Copy, PartialEq)]
 pub enum Bq { Lp, Hp, Bp, Peak, Ls, Hs, Ap }
 
+// RBJ biquad coefficients, normalized by a0
+#[derive(Clone, Copy)]
+pub struct Coef { b0: f64, b1: f64, b2: f64, a1: f64, a2: f64 }
+
 // RBJ biquad, in place
 pub fn biquad(x: &mut [f32], ty: Bq, f: f64, q: f64, gain_db: f64, sr: f64) {
+    cascade(&mut [x], &[coef(ty, f, q, gain_db, sr)]);
+}
+pub fn lr4(x: &mut [f32], ty: Bq, f: f64, sr: f64) {
+    let c = coef(ty, f, FRAC_1_SQRT_2, 0.0, sr);
+    cascade(&mut [x], &[c, c]);
+}
+pub fn lr4c(ty: Bq, f: f64, sr: f64) -> [Coef; 2] { let c = coef(ty, f, FRAC_1_SQRT_2, 0.0, sr); [c, c] }
+
+/// Runs every buffer (one or two) through the same chain of biquad stages. Each stage's output is rounded to f32
+/// before the next, so the result equals running the stages one after another over whole buffers. Stages go
+/// two at a time and channels side by side, so independent recursions overlap in the CPU.
+pub fn cascade(bufs: &mut [&mut [f32]], st: &[Coef]) {
+    match bufs {
+        [x] => { for c in st.chunks(4) { match c.len() { 4 => bq1x4(x, c), 3 => { bq1x2(x, &c[0], &c[1]); bq1(x, &c[2]) } 2 => bq1x2(x, &c[0], &c[1]), _ => bq1(x, &c[0]) } } }
+        [l, r] if st.len() >= 8 => par2(l, r, |x| cascade(&mut [x], st)),
+        [l, r] => { for c in st.chunks(2) { if c.len() == 2 { bq2x2(l, r, &c[0], &c[1]) } else { bq2(l, r, &c[0]) } } }
+        _ => { for x in bufs.iter_mut() { cascade(&mut [&mut **x], st); } }
+    }
+}
+#[inline(always)]
+fn tick(c: &Coef, xi: f64, z: &mut (f64, f64, f64, f64)) -> f32 {
+    let y = c.b0 * xi + c.b1 * z.0 + c.b2 * z.1 - c.a1 * z.2 - c.a2 * z.3;
+    z.1 = z.0; z.0 = xi; z.3 = z.2; z.2 = y;
+    y as f32
+}
+fn bq1(x: &mut [f32], c: &Coef) {
+    let mut z = (0.0, 0.0, 0.0, 0.0);
+    for v in x.iter_mut() { *v = tick(c, *v as f64, &mut z); }
+}
+fn bq1x2(x: &mut [f32], c1: &Coef, c2: &Coef) {
+    let (mut z1, mut z2) = ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0));
+    for v in x.iter_mut() { let a = tick(c1, *v as f64, &mut z1); *v = tick(c2, a as f64, &mut z2); }
+}
+fn bq1x4(x: &mut [f32], c: &[Coef]) {
+    let z0 = (0.0, 0.0, 0.0, 0.0);
+    let mut z = [z0; 4];
+    for v in x.iter_mut() {
+        let a = tick(&c[0], *v as f64, &mut z[0]);
+        let b = tick(&c[1], a as f64, &mut z[1]);
+        let d = tick(&c[2], b as f64, &mut z[2]);
+        *v = tick(&c[3], d as f64, &mut z[3]);
+    }
+}
+fn bq2(l: &mut [f32], r: &mut [f32], c: &Coef) {
+    let (mut zl, mut zr) = ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0));
+    for (a, b) in l.iter_mut().zip(r.iter_mut()) { *a = tick(c, *a as f64, &mut zl); *b = tick(c, *b as f64, &mut zr); }
+}
+fn bq2x2(l: &mut [f32], r: &mut [f32], c1: &Coef, c2: &Coef) {
+    let z0 = (0.0, 0.0, 0.0, 0.0);
+    let (mut l1, mut l2, mut r1, mut r2) = (z0, z0, z0, z0);
+    for (a, b) in l.iter_mut().zip(r.iter_mut()) {
+        let la = tick(c1, *a as f64, &mut l1);
+        let ra = tick(c1, *b as f64, &mut r1);
+        *a = tick(c2, la as f64, &mut l2);
+        *b = tick(c2, ra as f64, &mut r2);
+    }
+}
+
+pub fn coef(ty: Bq, f: f64, q: f64, gain_db: f64, sr: f64) -> Coef {
     let w = TAU * f.min(sr * 0.49) / sr;
     let (cw, sw) = (w.cos(), w.sin());
     let al = sw / (2.0 * q);
@@ -97,17 +160,7 @@ pub fn biquad(x: &mut [f32], ty: Bq, f: f64, q: f64, gain_db: f64, sr: f64) {
         Bq::Ap => { b0 = 1.0 - al; b1 = -2.0 * cw; b2 = 1.0 + al; a0 = 1.0 + al; a1 = -2.0 * cw; a2 = 1.0 - al; }
     }
     b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
-    let (mut x1, mut x2, mut y1, mut y2) = (0f64, 0f64, 0f64, 0f64);
-    for v in x.iter_mut() {
-        let xi = *v as f64;
-        let y = b0 * xi + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-        x2 = x1; x1 = xi; y2 = y1; y1 = y;
-        *v = y as f32;
-    }
-}
-pub fn lr4(x: &mut [f32], ty: Bq, f: f64, sr: f64) {
-    biquad(x, ty, f, FRAC_1_SQRT_2, 0.0, sr);
-    biquad(x, ty, f, FRAC_1_SQRT_2, 0.0, sr);
+    Coef { b0, b1, b2, a1, a2 }
 }
 
 // one-pole tilt: color<0 darkens (LP 20k->250 Hz), color>0 brightens (HP 20->5k Hz)
@@ -134,6 +187,8 @@ pub fn shape(x: &mut [f32], drive_db: f64, hard: f64, fold: f64) {
     if drive_db <= 0.01 && fold <= 0.001 { return; }
     let g = db_to_lin(drive_db);
     let mut xp = 0f64;
+    // logcosh/hc_f of the previous sample, carried over when the last step computed them
+    let mut prev: Option<(f64, f64)> = None;
     for s in x.iter_mut() {
         let mut v = *s as f64 * g;
         if fold > 0.0 {
@@ -142,8 +197,15 @@ pub fn shape(x: &mut [f32], drive_db: f64, hard: f64, fold: f64) {
         }
         let d = v - xp;
         let (yt, yh);
-        if d.abs() > 1e-5 { yt = (logcosh(v) - logcosh(xp)) / d; yh = (hc_f(v) - hc_f(xp)) / d; }
-        else { let m = 0.5 * (v + xp); yt = m.tanh(); yh = hc(m); }
+        if d.abs() > 1e-5 {
+            let (lp, hp) = prev.unwrap_or_else(|| (logcosh(xp), hc_f(xp)));
+            let (lv, hv) = (logcosh(v), hc_f(v));
+            yt = (lv - lp) / d; yh = (hv - hp) / d;
+            prev = Some((lv, hv));
+        } else {
+            let m = 0.5 * (v + xp); yt = m.tanh(); yh = hc(m);
+            prev = None;
+        }
         xp = v;
         *s = ((1.0 - hard) * yt + hard * yh) as f32;
     }
@@ -173,7 +235,59 @@ pub fn peak2(l: &[f32], r: &[f32]) -> f64 {
     pk
 }
 
-// radix-2 complex FFT, in place; inverse scales by 1/n
+// Twiddles for every stage of an n-point FFT, concatenated (stage len: len/2 entries at offset len/2 - 1). Generated
+// by the rotation recurrence cr' = cr·wr − ci·wi, ci' = cr·wi + ci·wr from (1, 0), so each value is exactly the one
+// the recurrence form of the butterfly loop produces.
+fn twiddles(n: usize, inv: bool) -> std::sync::Arc<Vec<(f64, f64)>> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<(usize, bool), Arc<Vec<(f64, f64)>>>>> = OnceLock::new();
+    let mut c = CACHE.get_or_init(Default::default).lock().unwrap();
+    c.entry((n, inv)).or_insert_with(|| {
+        let mut t = Vec::with_capacity(n);
+        let mut len = 2;
+        while len <= n {
+            let ang = (if inv { 2.0 } else { -2.0 }) * PI / len as f64;
+            let (wr, wi) = (ang.cos(), ang.sin());
+            let (mut cr, mut ci) = (1f64, 0f64);
+            for _ in 0..len / 2 {
+                t.push((cr, ci));
+                let tt = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = tt;
+            }
+            len <<= 1;
+        }
+        Arc::new(t)
+    }).clone()
+}
+
+// butterflies of one stage (block size len) for j in [j0, j1) of every block
+#[inline(always)]
+fn stage(re: *mut f64, im: *mut f64, n: usize, len: usize, w: &[(f64, f64)], j0: usize, j1: usize) {
+    let half = len / 2;
+    let mut i = 0;
+    while i < n {
+        for j in j0..j1 {
+            let (cr, ci) = w[j];
+            // SAFETY: a = i + j and b = a + half are < n; callers give disjoint (block, j) ranges to each thread
+            unsafe {
+                let (a, b) = (i + j, i + j + half);
+                let (rb, ib) = (*re.add(b), *im.add(b));
+                let tr = rb * cr - ib * ci;
+                let ti = rb * ci + ib * cr;
+                let (ra, ia) = (*re.add(a), *im.add(a));
+                *re.add(b) = ra - tr; *im.add(b) = ia - ti; *re.add(a) = ra + tr; *im.add(a) = ia + ti;
+            }
+        }
+        i += len;
+    }
+}
+#[derive(Clone, Copy)]
+struct Ptr(*mut f64);
+unsafe impl Send for Ptr {}
+unsafe impl Sync for Ptr {}
+
+// radix-2 complex FFT, in place; inverse scales by 1/n. Large sizes run on 4 threads: the first stages as four
+// independent quarter-size transforms, the last two with each stage's butterflies split four ways. Every butterfly
+// computes the same values as in a single-threaded pass.
 pub fn fft(re: &mut [f64], im: &mut [f64], inv: bool) {
     let n = re.len();
     let mut j = 0usize;
@@ -183,42 +297,52 @@ pub fn fft(re: &mut [f64], im: &mut [f64], inv: bool) {
         j ^= bit;
         if i < j { re.swap(i, j); im.swap(i, j); }
     }
-    let mut len = 2;
-    while len <= n {
-        let ang = (if inv { 2.0 } else { -2.0 }) * PI / len as f64;
-        let (wr, wi) = (ang.cos(), ang.sin());
-        let half = len / 2;
-        let mut i = 0;
-        while i < n {
-            let (mut cr, mut ci) = (1f64, 0f64);
-            for j in 0..half {
-                let a = i + j;
-                let b = a + half;
-                let tr = re[b] * cr - im[b] * ci;
-                let ti = re[b] * ci + im[b] * cr;
-                re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
-                let t = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = t;
+    let tw = twiddles(n, inv);
+    let w = |len: usize| &tw[len / 2 - 1..len - 1];
+    const T: usize = 4;
+    let (pr, pi) = (Ptr(re.as_mut_ptr()), Ptr(im.as_mut_ptr()));
+    if n >= 1 << 15 {
+        let m = n / T;
+        std::thread::scope(|sc| {
+            for t in 1..T {
+                let w = &w;
+                sc.spawn(move || { let (pr, pi) = (pr, pi); let mut len = 2; while len <= m { stage(unsafe { pr.0.add(t * m) }, unsafe { pi.0.add(t * m) }, m, len, w(len), 0, len / 2); len <<= 1; } });
             }
-            i += len;
+            let mut len = 2; while len <= m { stage(pr.0, pi.0, m, len, w(len), 0, len / 2); len <<= 1; }
+        });
+        let mut len = 2 * m;
+        while len <= n {
+            let (half, wl) = (len / 2, w(len));
+            std::thread::scope(|sc| {
+                for t in 1..T { sc.spawn(move || { let (pr, pi) = (pr, pi); stage(pr.0, pi.0, n, len, wl, t * half / T, (t + 1) * half / T) }); }
+                stage(pr.0, pi.0, n, len, wl, 0, half / T);
+            });
+            len <<= 1;
         }
-        len <<= 1;
+    } else {
+        let mut len = 2; while len <= n { stage(pr.0, pi.0, n, len, w(len), 0, len / 2); len <<= 1; }
     }
     if inv { let nf = n as f64; for i in 0..n { re[i] /= nf; im[i] /= nf; } }
 }
 
-// mono x convolved with stereo IR (hl, hr) via one complex FFT (IR packed as re/im)
-pub fn convolve_stereo(x: &[f32], hl: &[f32], hr: &[f32], out_len: usize) -> (Buf, Buf) {
-    let mut n = 1;
-    while n < x.len() + hl.len() { n <<= 1; }
-    let (mut xr, mut xi) = (vec![0f64; n], vec![0f64; n]);
-    for (d, &s) in xr.iter_mut().zip(x) { *d = s as f64; }
-    fft(&mut xr, &mut xi, false);
+// FFT size for convolving x_len samples with an h_len IR
+pub fn conv_size(x_len: usize, h_len: usize) -> usize { let mut n = 1; while n < x_len + h_len { n <<= 1; } n }
+// spectrum of a stereo IR packed as one complex signal (hl real, hr imaginary), at FFT size n
+pub fn ir_spectrum(hl: &[f32], hr: &[f32], n: usize) -> (Vec<f64>, Vec<f64>) {
     let (mut h_r, mut h_i) = (vec![0f64; n], vec![0f64; n]);
     for (d, &s) in h_r.iter_mut().zip(hl) { *d = s as f64; }
     for (d, &s) in h_i.iter_mut().zip(hr) { *d = s as f64; }
     fft(&mut h_r, &mut h_i, false);
+    (h_r, h_i)
+}
+// mono x convolved with a stereo IR given by its packed spectrum: (left, right)
+pub fn convolve_spec(x: &[f32], h: &(Vec<f64>, Vec<f64>), out_len: usize) -> (Buf, Buf) {
+    let n = h.0.len();
+    let (mut xr, mut xi) = (vec![0f64; n], vec![0f64; n]);
+    for (d, &s) in xr.iter_mut().zip(x) { *d = s as f64; }
+    fft(&mut xr, &mut xi, false);
     for k in 0..n {
-        let (a, b, c, d) = (xr[k], xi[k], h_r[k], h_i[k]);
+        let (a, b, c, d) = (xr[k], xi[k], h.0[k], h.1[k]);
         xr[k] = a * c - b * d; xi[k] = a * d + b * c;
     }
     fft(&mut xr, &mut xi, true);
@@ -234,14 +358,28 @@ impl IrSpec {
     }
 }
 pub fn make_ir(p: &IrSpec, sr: f64) -> (Buf, Buf) {
-    let ty = js_round(p.ty) as i64;
-    let (size, ch) = (p.size, p.ch);
-    let n = ((size * 1.3 + p.pre + 5.0) * sr / 1000.0).ceil() as usize;
+    let n = ((p.size * 1.3 + p.pre + 5.0) * sr / 1000.0).ceil() as usize;
     let pre = (p.pre * sr / 1000.0).floor() as usize;
     let mut out = [vec![0f32; n], vec![0f32; n]];
-    for c in 0..2 {
+    let (o0, o1) = out.split_at_mut(1);
+    std::thread::scope(|sc| {
+        let h1 = &mut o1[0];
+        sc.spawn(move || ir_channel(p, sr, 1, n, pre, h1));
+        ir_channel(p, sr, 0, n, pre, &mut o0[0]);
+    });
+    // unit energy (per channel average)
+    let (a, b) = (rms(&out[0]), rms(&out[1]));
+    let mut e = ((a * a + b * b) / 2.0 * n as f64).sqrt();
+    if e == 0.0 || e.is_nan() { e = 1.0; }
+    for h in out.iter_mut() { for v in h.iter_mut() { *v = (*v as f64 / e) as f32; } }
+    let [l, r] = out;
+    (l, r)
+}
+fn ir_channel(p: &IrSpec, sr: f64, c: usize, n: usize, pre: usize, h: &mut Buf) {
+    let ty = js_round(p.ty) as i64;
+    let (size, ch) = (p.size, p.ch);
+    {
         let mut r = Rng::new(to_i32(p.seed) as f64 * 7919.0 + 17.0 + c as f64 * 104729.0);
-        let h = &mut out[c];
         let t60 = size / 1000.0;
         let dk = 6.9078 / (t60 * sr);
         let noise_tail = |h: &mut Buf, r: &mut Rng, g: f64, dkm: f64| {
@@ -321,11 +459,9 @@ pub fn make_ir(p: &IrSpec, sr: f64) -> (Buf, Buf) {
             noise_tail(h, &mut r, 0.1, 1.0);
         }
     }
-    // unit energy (per channel average)
-    let (a, b) = (rms(&out[0]), rms(&out[1]));
-    let mut e = ((a * a + b * b) / 2.0 * n as f64).sqrt();
-    if e == 0.0 || e.is_nan() { e = 1.0; }
-    for h in out.iter_mut() { for v in h.iter_mut() { *v = (*v as f64 / e) as f32; } }
-    let [l, r] = out;
-    (l, r)
+}
+
+/// Applies f to both channels on two threads.
+pub fn par2(l: &mut [f32], r: &mut [f32], f: impl Fn(&mut [f32]) + Sync) {
+    std::thread::scope(|sc| { let h = sc.spawn(|| f(r)); f(l); h.join().unwrap(); });
 }

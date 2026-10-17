@@ -86,9 +86,8 @@ pub fn render_tr(p: &Params, n: usize, sr: f64, r: &mut Rng) -> Buf {
             x[i] = (x[i] as f64 + g * (2.0 * ph - 1.0 - blep(ph, dt))) as f32;
         }
     }
-    biquad(&mut x, Bq::Hp, p[TR_HP], 0.707, 0.0, sr);
-    biquad(&mut x, Bq::Hp, p[TR_HP], 0.707, 0.0, sr);
-    biquad(&mut x, Bq::Lp, p[TR_LP], 0.707, 0.0, sr);
+    let hp = coef(Bq::Hp, p[TR_HP], 0.707, 0.0, sr);
+    cascade(&mut [&mut x], &[hp, hp, coef(Bq::Lp, p[TR_LP], 0.707, 0.0, sr)]);
     if p[TR_CLOSE] < 19900.0 { // lowpass closing from the lowpass setting to close-to: highs end first
         svf_sweep_lp(&mut x, p[TR_LP].ln(), p[TR_CLOSE].min(p[TR_LP]).ln(), p[TR_CLOSE_MS] / 1000.0, 1.2, sr);
     }
@@ -150,74 +149,95 @@ fn formant(x: &mut [f32], pos: f64, mix: f64, sr: f64) {
     for j in 0..x.len() { x[j] = ((1.0 - mix) * x[j] as f64 + mix * y[j] as f64 * (rx / ry)) as f32; }
 }
 
+// modal bank (2-pole resonators with time-varying frequency), K modes stepped together; m[i] accumulates in mode order
+fn modal_chunk<const K: usize>(p: &Params, sr: f64, exc: &[f32], ms: &[(f64, f64)], m: &mut [f32]) {
+    let q = p[BODY_Q];
+    let f0: [f64; K] = std::array::from_fn(|j| keyed(p, p[BODY_MODE_F]) * ms[j].0);
+    let (mut y1, mut y2, mut c1, mut c2, mut gn) = ([0f64; K], [0f64; K], [0f64; K], [0f64; K], [0f64; K]);
+    for i in 0..m.len() {
+        if i & 15 == 0 {
+            let dm = drop_mul(p, i as f64 / sr);
+            for j in 0..K {
+                let f = (f0[j] * dm).min(sr * 0.45);
+                let rr = (-PI * (f / q) / sr).exp();
+                c1[j] = 2.0 * rr * (TAU * f / sr).cos(); c2[j] = -rr * rr; gn[j] = (1.0 - rr * rr) * 0.5;
+            }
+        }
+        let e = exc[i] as f64;
+        let mut acc = m[i];
+        for j in 0..K {
+            let y = gn[j] * e + c1[j] * y1[j] + c2[j] * y2[j];
+            y2[j] = y1[j]; y1[j] = y;
+            acc = (acc as f64 + ms[j].1 * y) as f32;
+        }
+        m[i] = acc;
+    }
+}
+fn body_modes(p: &Params, n: usize, sr: f64, exc: &[f32], modes: &[(f64, f64)]) -> Buf {
+    let mut m = vec![0f32; n];
+    for ch in modes.chunks(4) {
+        match ch.len() { 4 => modal_chunk::<4>(p, sr, exc, ch, &mut m), 3 => modal_chunk::<3>(p, sr, exc, ch, &mut m), 2 => modal_chunk::<2>(p, sr, exc, ch, &mut m), _ => modal_chunk::<1>(p, sr, exc, ch, &mut m) }
+    }
+    norm_rms(&mut m, 0.25, n);
+    m
+}
+// comb (feedback delay, cubic interp, damped, soft-limited loop)
+fn body_comb(p: &Params, n: usize, sr: f64, exc: &[f32], comb_f: f64) -> Buf {
+    const NB: usize = 1 << 14;
+    let mut c = vec![0f32; n];
+    let mut buf = vec![0f32; NB];
+    let damp = p[BODY_COMB_DAMP] * 0.9;
+    let (mut w, mut lp) = (0usize, 0f64);
+    let at = |buf: &Vec<f32>, k: i64| buf[(k & (NB as i64 - 1)) as usize] as f64;
+    for i in 0..n {
+        let f = (comb_f * drop_mul(p, i as f64 / sr)).min(sr * 0.4);
+        let d = ((NB - 4) as f64).min((sr / f).max(2.0));
+        let rp = w as f64 - d + (NB * 2) as f64;
+        let i0 = rp.floor();
+        let fr = rp - i0;
+        let i0 = i0 as i64;
+        let (xm1, x0, x1, x2) = (at(&buf, i0 - 1), at(&buf, i0), at(&buf, i0 + 1), at(&buf, i0 + 2));
+        let del = x0 + 0.5 * fr * (x1 - xm1 + fr * (2.0 * xm1 - 5.0 * x0 + 4.0 * x1 - x2 + fr * (3.0 * (x0 - x1) + x2 - xm1)));
+        lp = (1.0 - damp) * del + damp * lp;
+        let y = exc[i] as f64 * 0.3 + p[BODY_COMB_FB] * lp.tanh();
+        buf[w & (NB - 1)] = y as f32; w += 1; c[i] = y as f32;
+    }
+    norm_rms(&mut c, 0.25, n);
+    c
+}
+// FM tone
+fn body_fm(p: &Params, n: usize, sr: f64) -> Buf {
+    let mut fm = vec![0f32; n];
+    let base = midi_hz(p[NOTE]) * p[BODY_FM_RATIO];
+    let (mut pc, mut pm) = (0f64, 0f64);
+    for i in 0..n {
+        let t = i as f64 / sr;
+        let fc = (base * drop_mul(p, t)).min(sr * 0.45);
+        pc += TAU * fc / sr;
+        pm += TAU * fc * p[BODY_FM_MOD] / sr;
+        fm[i] = (pc + p[BODY_FM_IDX] * (-t / (p[BODY_FM_TAU] / 1000.0)).exp() * pm.sin()).sin() as f32;
+    }
+    norm_rms(&mut fm, 0.25, n);
+    fm
+}
+
 fn render_body_channel(p: &Params, n: usize, sr: f64, r: &mut Rng, modes: &[(f64, f64)]) -> Buf {
-    let comb_f = keyed(p, p[BODY_COMB_F]);
     let mut exc = white_noise(n, r);
     color_noise(&mut exc, p[BODY_COLOR], sr);
     norm_rms(&mut exc, 0.25, n);
+    // modal bank, comb and FM tone read only the excitation: each renders on its own thread, summed in order
+    let (m, c, fm) = std::thread::scope(|sc| {
+        let exc = &exc;
+        let m = (p[BODY_MODES] > -59.0).then(|| sc.spawn(move || body_modes(p, n, sr, exc, modes)));
+        let c = (p[BODY_COMB] > -59.0).then(|| sc.spawn(move || body_comb(p, n, sr, exc, keyed(p, p[BODY_COMB_F]))));
+        let fm = (p[BODY_FM] > -59.0).then(|| body_fm(p, n, sr));
+        (m.map(|h| h.join().unwrap()), c.map(|h| h.join().unwrap()), fm)
+    });
     let mut out = vec![0f32; n];
     if p[BODY_NOISE] > -59.0 { add_scaled(&mut out, &exc, db_to_lin(p[BODY_NOISE])); }
-    // modal bank (2-pole resonators with time-varying frequency)
-    if p[BODY_MODES] > -59.0 {
-        let mut m = vec![0f32; n];
-        let q = p[BODY_Q];
-        for &(ratio, amp) in modes {
-            let (mut y1, mut y2) = (0f64, 0f64);
-            let f0 = keyed(p, p[BODY_MODE_F]) * ratio;
-            let (mut c1, mut c2, mut gn) = (0f64, 0f64, 0f64);
-            for i in 0..n {
-                if i & 15 == 0 {
-                    let f = (f0 * drop_mul(p, i as f64 / sr)).min(sr * 0.45);
-                    let rr = (-PI * (f / q) / sr).exp();
-                    c1 = 2.0 * rr * (TAU * f / sr).cos(); c2 = -rr * rr; gn = (1.0 - rr * rr) * 0.5;
-                }
-                let y = gn * exc[i] as f64 + c1 * y1 + c2 * y2;
-                y2 = y1; y1 = y;
-                m[i] = (m[i] as f64 + amp * y) as f32;
-            }
-        }
-        norm_rms(&mut m, 0.25, n);
-        add_scaled(&mut out, &m, db_to_lin(p[BODY_MODES]));
-    }
-    // comb (feedback delay, cubic interp, damped, soft-limited loop)
-    if p[BODY_COMB] > -59.0 {
-        const NB: usize = 1 << 14;
-        let mut c = vec![0f32; n];
-        let mut buf = vec![0f32; NB];
-        let damp = p[BODY_COMB_DAMP] * 0.9;
-        let (mut w, mut lp) = (0usize, 0f64);
-        let at = |buf: &Vec<f32>, k: i64| buf[(k & (NB as i64 - 1)) as usize] as f64;
-        for i in 0..n {
-            let f = (comb_f * drop_mul(p, i as f64 / sr)).min(sr * 0.4);
-            let d = ((NB - 4) as f64).min((sr / f).max(2.0));
-            let rp = w as f64 - d + (NB * 2) as f64;
-            let i0 = rp.floor();
-            let fr = rp - i0;
-            let i0 = i0 as i64;
-            let (xm1, x0, x1, x2) = (at(&buf, i0 - 1), at(&buf, i0), at(&buf, i0 + 1), at(&buf, i0 + 2));
-            let del = x0 + 0.5 * fr * (x1 - xm1 + fr * (2.0 * xm1 - 5.0 * x0 + 4.0 * x1 - x2 + fr * (3.0 * (x0 - x1) + x2 - xm1)));
-            lp = (1.0 - damp) * del + damp * lp;
-            let y = exc[i] as f64 * 0.3 + p[BODY_COMB_FB] * lp.tanh();
-            buf[w & (NB - 1)] = y as f32; w += 1; c[i] = y as f32;
-        }
-        norm_rms(&mut c, 0.25, n);
-        add_scaled(&mut out, &c, db_to_lin(p[BODY_COMB]));
-    }
-    // FM tone
-    if p[BODY_FM] > -59.0 {
-        let mut fm = vec![0f32; n];
-        let base = midi_hz(p[NOTE]) * p[BODY_FM_RATIO];
-        let (mut pc, mut pm) = (0f64, 0f64);
-        for i in 0..n {
-            let t = i as f64 / sr;
-            let fc = (base * drop_mul(p, t)).min(sr * 0.45);
-            pc += TAU * fc / sr;
-            pm += TAU * fc * p[BODY_FM_MOD] / sr;
-            fm[i] = (pc + p[BODY_FM_IDX] * (-t / (p[BODY_FM_TAU] / 1000.0)).exp() * pm.sin()).sin() as f32;
-        }
-        norm_rms(&mut fm, 0.25, n);
-        add_scaled(&mut out, &fm, db_to_lin(p[BODY_FM]));
-    }
+    if let Some(m) = m { add_scaled(&mut out, &m, db_to_lin(p[BODY_MODES])); }
+    if let Some(c) = c { add_scaled(&mut out, &c, db_to_lin(p[BODY_COMB])); }
+    if let Some(fm) = fm { add_scaled(&mut out, &fm, db_to_lin(p[BODY_FM])); }
     // open-close SVF (Cytomic TPT), blended with dry
     if p[BODY_FLT_MIX] > 0.001 {
         let k = 2.0 - 2.0 * p[BODY_FLT_RES];
@@ -246,8 +266,8 @@ fn render_body_channel(p: &Params, n: usize, sr: f64, r: &mut Rng, modes: &[(f64
     mul_env(&mut out, &e);
     norm_rms(&mut out, 0.25, active_len(sr, p[BODY_ATT], p[BODY_HOLD], p[BODY_REL]));
     shape(&mut out, p[BODY_DRIVE], 0.3, p[BODY_FOLD]);
-    biquad(&mut out, Bq::Hp, p[BODY_HP], 0.707, 0.0, sr);
-    biquad(&mut out, Bq::Hp, p[BODY_HP], 0.707, 0.0, sr);
+    let hp = coef(Bq::Hp, p[BODY_HP], 0.707, 0.0, sr);
+    cascade(&mut [&mut out], &[hp, hp]);
     out
 }
 
@@ -282,9 +302,11 @@ fn mode_table(p: &Params, r: &mut Rng) -> Vec<(f64, f64)> {
 
 pub fn render_body(p: &Params, n: usize, sr: f64, seed: f64) -> Stereo {
     let modes = mode_table(p, &mut Rng::new(12345.0));
-    let mid = render_body_channel(p, n, sr, &mut Rng::new(seed * 101.0 + 1.0), &modes);
-    if p[BODY_WIDTH] < 0.01 { return (mid.clone(), mid); }
-    let side = render_body_channel(p, n, sr, &mut Rng::new(seed * 101.0 + 2.0), &modes);
+    if p[BODY_WIDTH] < 0.01 { let mid = render_body_channel(p, n, sr, &mut Rng::new(seed * 101.0 + 1.0), &modes); return (mid.clone(), mid); }
+    let (mid, side) = std::thread::scope(|sc| {
+        let side = sc.spawn(|| render_body_channel(p, n, sr, &mut Rng::new(seed * 101.0 + 2.0), &modes));
+        (render_body_channel(p, n, sr, &mut Rng::new(seed * 101.0 + 1.0), &modes), side.join().unwrap())
+    });
     let w = p[BODY_WIDTH];
     let gm = 1.0 / (1.0 + w * w).sqrt();
     let (mut l, mut rr) = (vec![0f32; n], vec![0f32; n]);
@@ -303,6 +325,8 @@ fn synth_voices(p: &Params, n: usize, sr: f64, r: &mut Rng, side: bool) -> Buf {
     let d = p[SYN_PITCH] / 12.0;
     let pt = p[SYN_PITCH_MS] / 1000.0;
     let mut x = vec![0f32; n];
+    // pitch dive multiplier, the same for every voice
+    let curve: Vec<f64> = (0..n).map(|i| 2f64.powf(d * (-(i as f64) / sr / pt).exp())).collect();
     let mut stacks = vec![(root, 1.0)];
     if p[SYN_INT_MIX] > 0.001 { stacks.push((root * 2f64.powf(js_round(p[SYN_INT]) / 12.0), p[SYN_INT_MIX])); }
     for &(base, sg) in &stacks {
@@ -313,8 +337,9 @@ fn synth_voices(p: &Params, n: usize, sr: f64, r: &mut Rng, side: bool) -> Buf {
             let w = if vv > 1 && wave == 2 { if v == (vv >> 1) { 1.0 } else { 0.7 } } else { 1.0 };
             let amp = sg * w / (vv as f64).sqrt();
             let mut ph = r.next();
+            let bm = base * mul;
             for i in 0..n {
-                let f = (base * mul * 2f64.powf(d * (-(i as f64) / sr / pt).exp())).min(sr * 0.45);
+                let f = (bm * curve[i]).min(sr * 0.45);
                 let dt = f / sr;
                 ph += dt; if ph >= 1.0 { ph -= 1.0; }
                 let y = if wave == 0 || wave == 2 {
@@ -339,9 +364,11 @@ fn synth_voices(p: &Params, n: usize, sr: f64, r: &mut Rng, side: bool) -> Buf {
     x
 }
 pub fn render_synth(p: &Params, n: usize, sr: f64, seed: f64) -> Stereo {
-    let a = synth_voices(p, n, sr, &mut Rng::new(seed * 23.0 + 1.0), false);
-    if p[SYN_WIDTH] < 0.01 { return (a.clone(), a); }
-    let b = synth_voices(p, n, sr, &mut Rng::new(seed * 23.0 + 2.0), true);
+    if p[SYN_WIDTH] < 0.01 { let a = synth_voices(p, n, sr, &mut Rng::new(seed * 23.0 + 1.0), false); return (a.clone(), a); }
+    let (a, b) = std::thread::scope(|sc| {
+        let b = sc.spawn(|| synth_voices(p, n, sr, &mut Rng::new(seed * 23.0 + 2.0), true));
+        (synth_voices(p, n, sr, &mut Rng::new(seed * 23.0 + 1.0), false), b.join().unwrap())
+    });
     let w = p[SYN_WIDTH];
     let (mut l, mut r) = (vec![0f32; n], vec![0f32; n]);
     for i in 0..n {

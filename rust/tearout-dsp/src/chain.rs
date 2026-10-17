@@ -3,12 +3,14 @@ use crate::dsp::*;
 use crate::id::*;
 use crate::Params;
 
-fn disperse(x: &mut [f32], n: f64, f: f64, q: f64, sr: f64) {
-    let mut k = 0.0;
-    while k < n { biquad(x, Bq::Ap, f, q, 0.0, sr); k += 1.0; }
+fn disperse(l: &mut [f32], r: &mut [f32], n: f64, f: f64, q: f64, sr: f64) {
+    let c = coef(Bq::Ap, f, q, 0.0, sr);
+    let mut st = vec![];
+    while (st.len() as f64) < n { st.push(c); }
+    cascade(&mut [l, r], &st);
 }
-// single-sideband frequency shift via FFT analytic signal
-fn freq_shift(x: &[f32], df: f64, sr: f64) -> Buf {
+// single-sideband frequency shift via FFT analytic signal; rot[i] = (cos, sin) of the shift phase at sample i
+fn freq_shift(x: &[f32], rot: &[(f64, f64)]) -> Buf {
     let mut n = 1;
     while n < x.len() { n <<= 1; }
     let (mut re, mut im) = (vec![0f64; n], vec![0f64; n]);
@@ -17,8 +19,7 @@ fn freq_shift(x: &[f32], df: f64, sr: f64) -> Buf {
     for k in 1..n / 2 { re[k] *= 2.0; im[k] *= 2.0; }
     for k in n / 2 + 1..n { re[k] = 0.0; im[k] = 0.0; }
     fft(&mut re, &mut im, true);
-    let w = TAU * df / sr;
-    (0..x.len()).map(|i| { let a = w * i as f64; (re[i] * a.cos() - im[i] * a.sin()) as f32 }).collect()
+    (0..x.len()).map(|i| (re[i] * rot[i].0 - im[i] * rot[i].1) as f32).collect()
 }
 fn peak_norm(l: &mut [f32], r: &mut [f32], target: f64) {
     let pk = peak2(l, r);
@@ -40,54 +41,76 @@ pub fn env_follow(x: &[f32], sr: f64, att_ms: f64, rel_ms: f64) -> Buf {
 pub fn ott_core(l: &mut [f32], r: &mut [f32], depth: f64, up: f64, tm: f64, sr: f64) {
     if depth < 0.001 { return; }
     let n = l.len();
-    let split = |x: &[f32]| -> [Buf; 3] {
-        let mut lo = x.to_vec(); lr4(&mut lo, Bq::Lp, 120.0, sr);
-        let mut rest = x.to_vec(); lr4(&mut rest, Bq::Hp, 120.0, sr);
-        // allpass-compensate the low band for the 2.5k crossover
-        let mut lo_a = lo.clone(); lr4(&mut lo_a, Bq::Lp, 2500.0, sr);
-        lr4(&mut lo, Bq::Hp, 2500.0, sr);
-        for i in 0..n { lo_a[i] = (lo_a[i] as f64 + lo[i] as f64) as f32; }
-        let mut mid = rest.clone(); lr4(&mut mid, Bq::Lp, 2500.0, sr);
-        lr4(&mut rest, Bq::Hp, 2500.0, sr);
-        [lo_a, mid, rest]
-    };
-    let (bl, br) = (split(l), split(r));
-    let cfg = [(0usize, 12.0 * tm, 120.0 * tm), (1, 4.0 * tm, 70.0 * tm), (2, 2.0 * tm, 40.0 * tm)];
-    l.fill(0.0); r.fill(0.0);
-    for &(b, at, rl) in &cfg {
-        let sum: Buf = (0..n).map(|i| (bl[b][i] as f64).abs().max((br[b][i] as f64).abs()) as f32).collect();
-        let e = env_follow(&sum, sr, at, rl);
-        for i in 0..n {
-            let lv = 20.0 * (e[i] as f64 + 1e-9).log10();
-            let mut gdb = 0f64;
-            if lv > -18.0 { gdb -= (lv + 18.0) * (1.0 - 1.0 / 8.0); }
-            if lv < -30.0 && lv > -75.0 { gdb += ((-30.0 - lv) * (1.0 - 1.0 / 3.0)).min(24.0) * up; }
-            let g = 10f64.powf((depth * gdb) / 20.0);
-            l[i] = (l[i] as f64 + bl[b][i] as f64 * g) as f32;
-            r[i] = (r[i] as f64 + br[b][i] as f64 * g) as f32;
+    // both channels at once; low band (allpass-compensated for the 2.5k crossover) and the rest on separate threads
+    let (lp1, hp1, lp2, hp2) = (lr4c(Bq::Lp, 120.0, sr), lr4c(Bq::Hp, 120.0, sr), lr4c(Bq::Lp, 2500.0, sr), lr4c(Bq::Hp, 2500.0, sr));
+    let ((la_l, la_r), ((mid_l, mid_r), (hi_l, hi_r))) = std::thread::scope(|sc| {
+        let rest = sc.spawn(|| {
+            let (mut hi_l, mut hi_r) = (l.to_vec(), r.to_vec()); cascade(&mut [&mut hi_l, &mut hi_r], &hp1);
+            let (mut mid_l, mut mid_r) = (hi_l.clone(), hi_r.clone()); cascade(&mut [&mut mid_l, &mut mid_r], &lp2);
+            cascade(&mut [&mut hi_l, &mut hi_r], &hp2);
+            ((mid_l, mid_r), (hi_l, hi_r))
+        });
+        let (mut lo_l, mut lo_r) = (l.to_vec(), r.to_vec()); cascade(&mut [&mut lo_l, &mut lo_r], &lp1);
+        let (mut la_l, mut la_r) = (lo_l.clone(), lo_r.clone()); cascade(&mut [&mut la_l, &mut la_r], &lp2);
+        cascade(&mut [&mut lo_l, &mut lo_r], &hp2);
+        for i in 0..n { la_l[i] = (la_l[i] as f64 + lo_l[i] as f64) as f32; la_r[i] = (la_r[i] as f64 + lo_r[i] as f64) as f32; }
+        ((la_l, la_r), rest.join().unwrap())
+    });
+    let (bl, br) = ([la_l, mid_l, hi_l], [la_r, mid_r, hi_r]);
+    let cfg = [(12.0 * tm, 120.0 * tm), (4.0 * tm, 70.0 * tm), (2.0 * tm, 40.0 * tm)];
+    // per band: gain per sample, from its own envelope (bands on separate threads)
+    let gains: Vec<Vec<f64>> = std::thread::scope(|sc| {
+        let hs: Vec<_> = (0..3).map(|b| { let (bl, br) = (&bl[b], &br[b]); let (at, rl) = cfg[b]; sc.spawn(move || ott_gains(bl, br, depth, up, at, rl, sr)) }).collect();
+        hs.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    // bands summed in order, as accumulating into zeroed buffers
+    for i in 0..n {
+        let (mut a, mut b) = (0f32, 0f32);
+        for k in 0..3 {
+            a = (a as f64 + bl[k][i] as f64 * gains[k][i]) as f32;
+            b = (b as f64 + br[k][i] as f64 * gains[k][i]) as f32;
         }
+        l[i] = a; r[i] = b;
     }
 }
 
-pub fn crunch(l: &mut [f32], r: &mut [f32], p: &Params, sr: f64, ir: &mut dyn FnMut(&IrSpec) -> std::sync::Arc<(Buf, Buf)>) {
+// one OTT band's gain per sample. Envelope levels inside (-30, -18) dB or below -75 dB give exactly 0 dB of gain:
+// those are recognized from the linear envelope (with a 1e-12 margin, so the dB comparison can't disagree) and skip log/pow.
+fn ott_gains(bl: &[f32], br: &[f32], depth: f64, up: f64, at: f64, rl: f64, sr: f64) -> Vec<f64> {
+    let sum: Buf = (0..bl.len()).map(|i| (bl[i] as f64).abs().max((br[i] as f64).abs()) as f32).collect();
+    let e = env_follow(&sum, sr, at, rl);
+    let (t75, t30, t18) = (10f64.powf(-75.0 / 20.0) * (1.0 - 1e-12), 10f64.powf(-30.0 / 20.0) * (1.0 + 1e-12), 10f64.powf(-18.0 / 20.0) * (1.0 - 1e-12));
+    e.iter().map(|&ev| {
+        let x = ev as f64 + 1e-9;
+        if x < t75 || (x > t30 && x < t18) { return 1.0; }
+        let lv = 20.0 * x.log10();
+        let mut gdb = 0f64;
+        if lv > -18.0 { gdb -= (lv + 18.0) * (1.0 - 1.0 / 8.0); }
+        if lv < -30.0 && lv > -75.0 { gdb += ((-30.0 - lv) * (1.0 - 1.0 / 3.0)).min(24.0) * up; }
+        10f64.powf((depth * gdb) / 20.0)
+    }).collect()
+}
+
+// `conv(ir, x, out_len)`: x convolved with the stereo IR the spec describes
+pub fn crunch(l: &mut [f32], r: &mut [f32], p: &Params, sr: f64, conv: &mut dyn FnMut(&IrSpec, &[f32], usize) -> (Buf, Buf)) {
     if p[CR_MIX] < 0.001 { return; }
+    let t0 = std::time::Instant::now();
     let (dl, dr) = (l.to_vec(), r.to_vec());
     let rms_in = rms2(l, r);
-    for x in [&mut *l, &mut *r] {
-        lr4(x, Bq::Hp, p[CR_HP], sr);
-        if p[CR_MUD] < -0.05 { biquad(x, Bq::Peak, p[CR_HP] * 1.2, 1.0, p[CR_MUD], sr); }
-        if p[CR_PK_G] > 0.05 { biquad(x, Bq::Peak, p[CR_PK_F], 1.4, p[CR_PK_G], sr); }
-    }
+    let mut eq = lr4c(Bq::Hp, p[CR_HP], sr).to_vec();
+    if p[CR_MUD] < -0.05 { eq.push(coef(Bq::Peak, p[CR_HP] * 1.2, 1.0, p[CR_MUD], sr)); }
+    if p[CR_PK_G] > 0.05 { eq.push(coef(Bq::Peak, p[CR_PK_F], 1.4, p[CR_PK_G], sr)); }
+    cascade(&mut [&mut *l, &mut *r], &eq);
     peak_norm(l, r, 0.7);
-    shape(l, p[CR_DRIVE1], p[CR_HARD1], 0.0); shape(r, p[CR_DRIVE1], p[CR_HARD1], 0.0);
+    par2(l, r, |x| shape(x, p[CR_DRIVE1], p[CR_HARD1], 0.0));
+    crate::timing::add(5, t0); let t0 = std::time::Instant::now();
     if p[CR_DISP_N] > 0.0 {
-        disperse(l, p[CR_DISP_N], p[CR_DISP_F], p[CR_DISP_Q], sr);
-        disperse(r, p[CR_DISP_N], p[CR_DISP_F], p[CR_DISP_Q], sr);
+        disperse(l, r, p[CR_DISP_N], p[CR_DISP_F], p[CR_DISP_Q], sr);
     }
+    crate::timing::add(6, t0); let t0 = std::time::Instant::now();
     if p[CR_CONV] > 0.001 {
-        let h = ir(&IrSpec { ty: p[CR_CONV_TYPE], size: p[CR_CONV_LEN], ch: p[CR_CONV_CHAR], tone: 16000.0, pre: 0.0, seed: 3.0 });
         let mono: Buf = (0..l.len()).map(|i| (0.5 * (l[i] as f64 + r[i] as f64)) as f32).collect();
-        let (cl, cr) = convolve_stereo(&mono, &h.0, &h.1, l.len());
+        let (cl, cr) = conv(&IrSpec { ty: p[CR_CONV_TYPE], size: p[CR_CONV_LEN], ch: p[CR_CONV_CHAR], tone: 16000.0, pre: 0.0, seed: 3.0 }, &mono, l.len());
         let mut den = rms2(&cl, &cr);
         if den == 0.0 { den = 1.0; }
         let gc = rms2(l, r) / den;
@@ -97,15 +120,17 @@ pub fn crunch(l: &mut [f32], r: &mut [f32], p: &Params, sr: f64, ir: &mut dyn Fn
             r[i] = ((1.0 - w) * r[i] as f64 + w * gc * cr[i] as f64) as f32;
         }
     }
+    crate::timing::add(7, t0); let t0 = std::time::Instant::now();
     peak_norm(l, r, 0.7);
-    shape(l, p[CR_DRIVE2], 0.5, 0.0); shape(r, p[CR_DRIVE2], 0.5, 0.0);
+    par2(l, r, |x| shape(x, p[CR_DRIVE2], 0.5, 0.0));
     let mut k = 0.0;
     while k < p[CR_RACK] {
         ott_core(l, r, p[CR_RACK_DEPTH], 0.8, 2.5, sr);
         peak_norm(l, r, 1.4);
-        for x in [&mut *l, &mut *r] { for v in x.iter_mut() { *v = (*v as f64).tanh() as f32; } }
+        par2(l, r, |x| for v in x.iter_mut() { *v = (*v as f64).tanh() as f32; });
         k += 1.0;
     }
+    crate::timing::add(8, t0); let t0 = std::time::Instant::now();
     if p[CR_PP] > 0.001 {
         const NB: usize = 1 << 13;
         let dly = (p[CR_PP_MS] * sr / 1000.0).floor() as usize;
@@ -121,19 +146,23 @@ pub fn crunch(l: &mut [f32], r: &mut [f32], p: &Params, sr: f64, ir: &mut dyn Fn
             r[i] = (r[i] as f64 + p[CR_PP] * yr) as f32;
         }
     }
+    crate::timing::add(9, t0); let t0 = std::time::Instant::now();
     if p[CR_FS_WET] > 0.001 && p[CR_FS].abs() > 0.05 {
-        let (sl, sr2) = (freq_shift(l, p[CR_FS], sr), freq_shift(r, p[CR_FS], sr));
+        let w = TAU * p[CR_FS] / sr;
+        let rot: Vec<(f64, f64)> = (0..l.len()).map(|i| { let a = w * i as f64; (a.cos(), a.sin()) }).collect();
+        let (sl, sr2) = std::thread::scope(|sc| { let h = sc.spawn(|| freq_shift(r, &rot)); (freq_shift(l, &rot), h.join().unwrap()) });
         let w = p[CR_FS_WET];
         for i in 0..l.len() {
             l[i] = ((1.0 - w) * l[i] as f64 + w * sl[i] as f64) as f32;
             r[i] = ((1.0 - w) * r[i] as f64 + w * sr2[i] as f64) as f32;
         }
     }
-    for x in [&mut *l, &mut *r] { lr4(x, Bq::Hp, p[CR_HP] * 0.8, sr); }
+    cascade(&mut [&mut *l, &mut *r], &lr4c(Bq::Hp, p[CR_HP] * 0.8, sr));
     // keep the tops' loudness relationship with the sub: output RMS = input RMS
     let rms_out = rms2(l, r);
     let g = if rms_out > 1e-9 { rms_in / rms_out } else { 0.0 };
     let m = p[CR_MIX];
+    crate::timing::add(10, t0);
     for i in 0..l.len() {
         l[i] = ((1.0 - m) * dl[i] as f64 + m * g * l[i] as f64) as f32;
         r[i] = ((1.0 - m) * dr[i] as f64 + m * g * r[i] as f64) as f32;
@@ -161,7 +190,7 @@ fn mids_chain(l: &mut [f32], r: &mut [f32], p: &Params, sr: f64) {
     let pk = peak2(l, r);
     let pre = if pk > 0.0 { 0.7 / pk } else { 1.0 };
     scale(l, pre); scale(r, pre);
-    shape(l, p[MST_DRIVE], p[MST_HARD], 0.0); shape(r, p[MST_DRIVE], p[MST_HARD], 0.0);
+    par2(l, r, |x| shape(x, p[MST_DRIVE], p[MST_HARD], 0.0));
     let mut d = rms2(l, r);
     if d == 0.0 { d = 1.0; }
     let g = r0 / d;
@@ -170,14 +199,14 @@ fn mids_chain(l: &mut [f32], r: &mut [f32], p: &Params, sr: f64) {
 
 // Final: tone shelves, mono lows, light soft ceiling, peak at -0.3 dBFS.
 fn final_stage(l: &mut [f32], r: &mut [f32], p: &Params, sr: f64) {
-    for x in [&mut *l, &mut *r] {
-        if p[MST_LOW].abs() > 0.05 { biquad(x, Bq::Ls, 90.0, 0.7, p[MST_LOW], sr); }
-        if p[MST_MID].abs() > 0.05 { biquad(x, Bq::Peak, 280.0, 0.9, p[MST_MID], sr); }
-        if p[MST_HIGH].abs() > 0.05 { biquad(x, Bq::Hs, 3000.0, 0.7, p[MST_HIGH], sr); }
-    }
-    let mut low_l = l.to_vec(); lr4(&mut low_l, Bq::Lp, p[MST_MONO], sr);
-    let mut low_r = r.to_vec(); lr4(&mut low_r, Bq::Lp, p[MST_MONO], sr);
-    lr4(l, Bq::Hp, p[MST_MONO], sr); lr4(r, Bq::Hp, p[MST_MONO], sr);
+    let mut tone = vec![];
+    if p[MST_LOW].abs() > 0.05 { tone.push(coef(Bq::Ls, 90.0, 0.7, p[MST_LOW], sr)); }
+    if p[MST_MID].abs() > 0.05 { tone.push(coef(Bq::Peak, 280.0, 0.9, p[MST_MID], sr)); }
+    if p[MST_HIGH].abs() > 0.05 { tone.push(coef(Bq::Hs, 3000.0, 0.7, p[MST_HIGH], sr)); }
+    cascade(&mut [&mut *l, &mut *r], &tone);
+    let (mut low_l, mut low_r) = (l.to_vec(), r.to_vec());
+    cascade(&mut [&mut low_l, &mut low_r], &lr4c(Bq::Lp, p[MST_MONO], sr));
+    cascade(&mut [&mut *l, &mut *r], &lr4c(Bq::Hp, p[MST_MONO], sr));
     for i in 0..l.len() {
         let m = 0.5 * (low_l[i] as f64 + low_r[i] as f64);
         l[i] = (l[i] as f64 + m) as f32; r[i] = (r[i] as f64 + m) as f32;
@@ -185,7 +214,7 @@ fn final_stage(l: &mut [f32], r: &mut [f32], p: &Params, sr: f64) {
     let pk = peak2(l, r);
     let pre = if pk > 0.0 { 1.0 / pk } else { 1.0 };
     scale(l, pre); scale(r, pre);
-    shape(l, 3.0, 0.2, 0.0); shape(r, 3.0, 0.2, 0.0);
+    par2(l, r, |x| shape(x, 3.0, 0.2, 0.0));
     let pk = peak2(l, r);
     let g = if pk > 0.0 { 0.966 / pk } else { 1.0 };
     scale(l, g); scale(r, g);

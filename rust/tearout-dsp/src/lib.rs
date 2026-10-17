@@ -54,3 +54,16 @@ pub fn from_norm(s: &Spec, u: f64) -> f64 {
         Scale::Lin => s.min + u * (s.max - s.min),
     }
 }
+
+/// Per-stage wall-clock totals (feature `timing`).
+pub mod timing {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    pub const STAGES: [&str; 11] = ["layers", "mix", "crunch", "reverb", "bus", "cr.eq+drive", "cr.disperse", "cr.conv", "cr.drive2+rack", "cr.pp", "cr.shift+out"];
+    #[allow(clippy::declare_interior_mutable_const)]
+    const Z: AtomicU64 = AtomicU64::new(0);
+    static NS: [AtomicU64; 11] = [Z; 11];
+    #[inline] pub fn add(stage: usize, t: std::time::Instant) { if cfg!(feature = "timing") { NS[stage].fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed); } }
+    pub fn report(renders: usize) -> String {
+        STAGES.iter().enumerate().map(|(i, s)| format!("{s} {:.2}", NS[i].load(Ordering::Relaxed) as f64 / 1e6 / renders as f64)).collect::<Vec<_>>().join("  ")
+    }
+}

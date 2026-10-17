@@ -14,6 +14,7 @@ pub struct Out { pub l: Buf, pub r: Buf, pub sr: f64 }
 pub struct Engine {
     samples: [Option<Stereo>; 3],
     irs: HashMap<String, Arc<(Buf, Buf)>>,
+    specs: HashMap<(String, usize), Arc<(Vec<f64>, Vec<f64>)>>,
 }
 
 #[derive(Default)]
@@ -40,13 +41,14 @@ impl Engine {
     }
     pub fn has_sample(&self, slot: usize) -> bool { self.samples[slot - 1].is_some() }
 
-    fn ir(&mut self, s: &IrSpec, sr: f64) -> Arc<(Buf, Buf)> {
+    // x convolved with the IR `s` describes; IRs and their spectra (per FFT size) are cached
+    fn conv(&mut self, s: &IrSpec, x: &[f32], out_len: usize, sr: f64) -> (Buf, Buf) {
         let key = s.key(sr);
-        if let Some(h) = self.irs.get(&key) { return h.clone(); }
-        if self.irs.len() > 64 { self.irs.clear(); }
-        let h = Arc::new(make_ir(s, sr));
-        self.irs.insert(key, h.clone());
-        h
+        if self.irs.len() > 512 { self.irs.clear(); self.specs.clear(); }
+        let h = self.irs.entry(key.clone()).or_insert_with(|| Arc::new(make_ir(s, sr))).clone();
+        let n = conv_size(x.len(), h.0.len());
+        let spec = self.specs.entry((key, n)).or_insert_with(|| Arc::new(ir_spectrum(&h.0, &h.1, n))).clone();
+        convolve_spec(x, &spec, out_len)
     }
 
     // Per-layer stereo buffers (post layer level, pre master).
@@ -54,16 +56,23 @@ impl Engine {
         let seed = to_i32(p[SEED]) as f64;
         let mono = |x: Buf| (x.clone(), x);
         let mut ly = Layers::default();
-        if p[SUB_LVL] > -59.0 { ly.sub = Some(mono(render_sub(p, n, sr, &mut Rng::new(seed * 19.0 + 11.0)))); }
-        if p[TR_LVL] > -59.0 { ly.tr = Some(mono(render_tr(p, n, sr, &mut Rng::new(seed * 13.0 + 3.0)))); }
-        if p[BODY_LVL] > -59.0 { ly.body = Some(render_body(p, n, sr, seed)); }
-        if p[SPICE_LVL] > -59.0 { ly.spice = Some(mono(render_spice(p, n, sr, &mut Rng::new(seed * 17.0 + 9.0)))); }
-        if p[SYN_LVL] > -59.0 { ly.synth = Some(render_synth(p, n, sr, seed)); }
-        for k in 0..3 {
-            if p[S1_LVL + 10 * k] > -59.0 {
-                if let Some(src) = &self.samples[k] { ly.smp[k] = Some(render_sample(p, src, k + 1, n, sr)); }
+        // layers are independent: each renders on its own thread with its own RNG
+        std::thread::scope(|sc| {
+            let sub = (p[SUB_LVL] > -59.0).then(|| sc.spawn(|| mono(render_sub(p, n, sr, &mut Rng::new(seed * 19.0 + 11.0)))));
+            let tr = (p[TR_LVL] > -59.0).then(|| sc.spawn(|| mono(render_tr(p, n, sr, &mut Rng::new(seed * 13.0 + 3.0)))));
+            let spice = (p[SPICE_LVL] > -59.0).then(|| sc.spawn(|| mono(render_spice(p, n, sr, &mut Rng::new(seed * 17.0 + 9.0)))));
+            let synth = (p[SYN_LVL] > -59.0).then(|| sc.spawn(|| render_synth(p, n, sr, seed)));
+            if p[BODY_LVL] > -59.0 { ly.body = Some(render_body(p, n, sr, seed)); }
+            for k in 0..3 {
+                if p[S1_LVL + 10 * k] > -59.0 {
+                    if let Some(src) = &self.samples[k] { ly.smp[k] = Some(render_sample(p, src, k + 1, n, sr)); }
+                }
             }
-        }
+            ly.sub = sub.map(|h| h.join().unwrap());
+            ly.tr = tr.map(|h| h.join().unwrap());
+            ly.spice = spice.map(|h| h.join().unwrap());
+            ly.synth = synth.map(|h| h.join().unwrap());
+        });
         // per-layer swell: a raised-sine ramp-in after the layer's drive, for ^-shaped (chug) attacks;
         // then per-layer onset delay (staggered layers: transient, then shell, then wash)
         for (layer, swell, delay) in [(&mut ly.sub, p[SUB_SWELL], p[SUB_DELAY]), (&mut ly.tr, p[TR_SWELL], p[TR_DELAY]), (&mut ly.body, p[BODY_SWELL], p[BODY_DELAY]), (&mut ly.synth, p[SYN_SWELL], p[SYN_DELAY])] {
@@ -139,7 +148,10 @@ impl Engine {
             let q = if shots > 1 { Self::shot_params(p, s, &mut rr) } else { p.clone() };
             let gl = if shots > 1 && s < shots - 1 { ((onsets[s + 1] - onsets[s]) * p[B_GATE] + 0.003 * sr).floor() } else { shot_len as f64 };
             let n = shot_len.min(gl.max(64.0) as usize);
+            let t0 = std::time::Instant::now();
             let ly = self.render_shot(&q, n, sr);
+            crate::timing::add(0, t0);
+            let t0 = std::time::Instant::now();
             let fade = n.min((0.002 * sr).floor() as usize);
             let o = onsets[s].floor() as usize;
             let all = [&ly.sub, &ly.tr, &ly.body, &ly.synth, &ly.spice, &ly.smp[0], &ly.smp[1], &ly.smp[2]];
@@ -154,6 +166,7 @@ impl Engine {
                     }
                 }
             }
+            crate::timing::add(1, t0);
         }
         // tops = tr + body + synth + spice (+ samples routed to mids), through the crunch chain
         let (mut tl, mut tr) = z();
@@ -170,19 +183,26 @@ impl Engine {
                 add_scaled(&mut tl, &sm.0, 1.0); add_scaled(&mut tr, &sm.1, 1.0); any_top = true;
             }
         }
-        if any_top { crunch(&mut tl, &mut tr, p, sr, &mut |s| self.ir(s, sr)); }
+        let t0 = std::time::Instant::now();
+        if any_top { crunch(&mut tl, &mut tr, p, sr, &mut |s, x, m| self.conv(s, x, m, sr)); }
+        crate::timing::add(2, t0);
+        let t0 = std::time::Instant::now();
         let tops = if any_top { Some((tl, tr)) } else { None };
         // reverb send from the tops; level relative to the send's RMS
         let rev = if p[REV_LVL] <= -59.0 { None } else {
             let send: Buf = match &tops { Some((a, b)) => (0..total).map(|i| (0.5 * (a[i] as f64 + b[i] as f64)) as f32).collect(), None => vec![0f32; total] };
-            let h = self.ir(&IrSpec { ty: p[REV_TYPE], size: p[REV_SIZE], ch: p[REV_CHAR], tone: p[REV_TONE], pre: p[REV_PRE], seed: p[SEED] }, sr);
-            let (mut a, mut b) = convolve_stereo(&send, &h.0, &h.1, total);
-            for x in [&mut a, &mut b] { biquad(x, Bq::Hp, p[REV_HP], 0.707, 0.0, sr); biquad(x, Bq::Hp, p[REV_HP], 0.707, 0.0, sr); }
+            let (mut a, mut b) = self.conv(&IrSpec { ty: p[REV_TYPE], size: p[REV_SIZE], ch: p[REV_CHAR], tone: p[REV_TONE], pre: p[REV_PRE], seed: p[SEED] }, &send, total, sr);
+            let hp = coef(Bq::Hp, p[REV_HP], 0.707, 0.0, sr);
+            cascade(&mut [&mut a, &mut b], &[hp, hp]);
             let (rs, rv) = (rms(&send), rms2(&a, &b));
             let g = if rv > 1e-9 { (rs / rv) * db_to_lin(p[REV_LVL]) } else { 0.0 };
             scale(&mut a, g); scale(&mut b, g);
             Some((a, b))
         };
-        bus(&acc[0], tops.as_ref(), rev.as_ref(), p, sr)
+        crate::timing::add(3, t0);
+        let t0 = std::time::Instant::now();
+        let out = bus(&acc[0], tops.as_ref(), rev.as_ref(), p, sr);
+        crate::timing::add(4, t0);
+        out
     }
 }
