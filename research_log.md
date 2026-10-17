@@ -357,3 +357,21 @@ Parity (fit/parity.js): 136 jobs = 47 shipped presets + defaults + 80 uniform-ra
 Found while building it: a JS crash when a layer delay exceeds the shot length in a fast burst (Float32Array.set offset out of bounds). Fixed in engine.js: the delayed layer is silent for that shot, which is what the Rust does.
 
 Speed: median preset 19.8 ms Rust vs 26.5 ms warm JS (1.47×). The port is 1:1, not optimized; conv/reverb FFTs and OTT band splits dominate. Plenty for re-render-on-knob-change in a plugin.
+
+### Optimizing the Rust engine
+
+Constraint I set: every speedup keeps the output numerically identical to the straight port (the parity numbers vs JS must not move by a digit), so speed work can never silently change the sound. All of these held: worst error stayed exactly -138.0 dB, 16/136 bit-identical, through every step.
+
+Profile of the 1:1 port (warm, presets): biquads 22%, exp 20%, FFT 16%, body loops 13%. What worked, in order (presets ms/render):
+- 18.8 → 18.7: FFT twiddle tables + cached IR spectra + carrying logcosh across shaper samples. FFT time fell 60%, but a generic multi-buffer cascade I introduced at the same time was slower than the old tight loop (state on the heap, runtime-length inner loops) and ate the win.
+- → 14.9: register-only biquad kernels (1 or 2 channels × 1, 2 or 4 stages pipelined). IIRs are latency-bound, so interleaving independent recursions is nearly free throughput.
+- → 13.7: stereo/multi-stage call sites (crunch EQ, disperser, OTT splits, final stage, reverb HP).
+- → 8.45: layers on threads (sub, tr, body mid/side, synth A/B, spice).
+- → 7.0: body modal bank / comb / FM on separate threads, modal bank 4 modes per pass (summed in the original order).
+- → 6.0: OTT bands on threads + exact dead-band skip (envelope in (-30,-18) dB or below -75 → gain exactly 1, recognized in the linear domain with a 1e-12 margin so the branch can't disagree with the dB comparison).
+- → 5.6: L/R shapers in parallel. → 5.4: 4-thread large FFTs (independent quarter transforms, then split butterflies).
+Random patches (crunch on, which no shipped preset uses: cr_mix is 0 in all 47) went 22.3 → 14.3 ms with warm caches; sharing the synth pitch curve across voices and splitting the frequency shifter's rotation out were the big ones there.
+
+Stage reuse for the plugin's knob-drag case: layer accumulations, crunch output and convolved reverb send are memoized by a hash of exactly the params each reads (plus sample-audio versions). Fuzz test (tg-memo-test): 9 base patches × every param changed in turn + sample swaps, cached engine vs fresh engine must be bit-identical: 1764 checks, 0 stale; with the crunch key deliberately broken it flags every cr_* param, so the test has teeth. Knob-drag cost on presets: master 2.25 ms, reverb level 2.2, reverb size 4.2, body filter 5.2.
+
+Left on the table: the rest is mostly libm exp/sin/tanh and serial IIR recursions. Faster math (vectorized exp/sin) would end bit-for-bit parity with the straight port while staying far below audibility; not taken yet because the current numbers are already well inside a plugin's needs.
