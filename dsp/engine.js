@@ -917,7 +917,7 @@ export function renderShot(p, n, sr = SR) {
   const DLY = { sub: p.sub_delay, tr: p.tr_delay, body: p.body_delay, synth: p.syn_delay };
   for (const [k, ms] of Object.entries(DLY)) {
     const d = Math.floor(((ms || 0) * sr) / 1000);
-    if (d > 0 && layers[k]) layers[k] = layers[k].map((x) => { const y = new Float32Array(n); y.set(x.subarray(0, Math.max(0, n - d)), d); return y; });
+    if (d > 0 && layers[k]) layers[k] = layers[k].map((x) => { const y = new Float32Array(n); if (d < n) y.set(x.subarray(0, n - d), d); return y; });
   }
   const gains = { sub: p.sub_lvl, tr: p.tr_lvl, body: p.body_lvl, spice: p.spice_lvl, synth: p.syn_lvl };
   for (const k in gains) if (layers[k]) { const g = dbToLin(gains[k]); layers[k] = layers[k].map((x) => { const y = x.slice(); for (let i = 0; i < n; i++) y[i] *= g; return y; }); }

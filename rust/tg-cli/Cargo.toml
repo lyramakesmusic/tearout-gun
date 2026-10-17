@@ -1,0 +1,8 @@
+[package]
+name = "tg-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tearout-dsp = { path = "../tearout-dsp" }
+serde_json = "1"

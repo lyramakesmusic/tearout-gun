@@ -328,3 +328,32 @@ Parallelism: cmaes got a `fBatch` path (whole generation at once; RNG sequence u
 First pool attempt deadlocked (headless run hung 30 min): the fit worker created helpers and immediately blocked in Atomics.wait for their ready flags — Chrome finishes nested-worker startup on the parent's event loop, so they never came up. Fix: async startup (await ready messages, 15 s timeout → single-thread), then synchronous batches; a batch that stalls 20 s finishes locally. Result, same snare, scale 0.05, model start: pool (10 helpers on 16 logical cores) **5.7 s vs 33.1 s single-thread = 5.8×, bit-identical fit** (same loss 10.2566, same param checksum). Cap is λ/⌈λ/size⌉ plus serial CMA bookkeeping (eigendecomposition per generation).
 Default fit button (scale 0.6), 3 held-out snares: first sound (model guess) at 120–200 ms; full fit 9–44 s; final loss 7.49 / 9.08 / 8.27.
 Idea queue: with spare cores, raise λ when pooled (bigger populations are more robust on multimodal stages) — costs no wall-clock up to the pool size.
+
+## Modular: does a folder choose its own architecture? (started)
+Question: if a sound is a variable set of typed layers, can greedy add/prune fitting over a folder recover which modules that sound type needs? Module library = the snare engine's layers (hit, click, tone, noise, metal, clap, room) + always-on bus. Greedy: start silent; per step try each inactive layer (its knobs + bus tone, CMA 300), keep the best if it cuts loss > 3%, refine all active (400); prune any layer whose removal (with level re-fit) costs < 1.5%. fit/exp_modular.js, samples by filename from the library (fit/mod_select.js): hats, claps, kicks, + held-out snares.
+Prediction (written before results): hats → noise and/or metal, no tone; kicks → tone dominant; claps → clap layer; snares → tone + noise (+hit). What would change my mind: hats choosing tone or kicks choosing noise → modules are interchangeable enough that the greedy pick reflects optimizability, not identity, and architecture-from-data needs either more distinct modules or a penalty on misuse.
+Smoke test (EV=40, 1 sample each — anecdote, not data): hat → tone, kick → noise at −33 dB. Exactly the failure case, which makes the real run more interesting. Population-size A/B was killed before finishing (Lyra: keep the fan quiet); the real modular run is 10/type on one efficiency-core process (taskpolicy -b, nice 19).
+
+## Modular search, partial results (26/40), and a confound
+
+Layer usage so far: kicks chose tone 6/6, claps chose clap 8/10, matching the prediction. The two-sample smoke-test anecdote (kick built from noise) did not replicate, so it was budget noise. Hats were the surprise: clap 6/10, click 4/10, noise 3/10, and metal 0/10, where I predicted metal/noise.
+
+Before reading anything into "hats never pick metal": `knobs()` in exp_modular.js excludes int-scaled knobs, so every integer knob stayed at its default for the whole search. Metal was always type 0 (modal shell ratios) at oct 5, with ±12 st of tune as its only pitch reach. The 808 six-square type, the bell type and higher octaves were never tried. The same goes for noise type, click type, tone octave/wave and room type. So the hat result measures "does modal-shell metal at oct 5 fit a hat" (no), not "does the metal module fit a hat".
+
+Next: fit/exp_ceiling.js. For each sample and each layer alone, enumerate that layer's type/oct ints (metal 5×5, tone 5×4, noise 7, click 5, room 5), screen each combo at 120 evals, refine the best two at 1000. That gives the best single-module fit with search order taken out. Prediction: with the 808 type or a high octave, metal becomes the best or near-best single module for most hats. If clap/noise still wins, the hat lane genuinely wants a different module (a filtered-noise layer with a resonant bandpass, roughly what clap already is).
+
+### Ceiling run, hat 1 (HH 1.wav)
+Single-layer bests: tone 7.98, noise 8.60, clap 9.84, metal 10.90 (808 type, oct 7), click 27.2, hit/room ≈ silent (29.56). At its frozen default (modal, oct 5), metal's 120-eval screen never beat silence, so the int-knob confound alone fully explains "metal 0/10 on hats" in the greedy run. Tone wins by impersonating noise: grit 0.99 (max 1), FM index 5/8, fold 0.72, 31 st pitch sweep. Tone has escape hatches (grit, FM, fold) that make it a broadband source, so a tone pick doesn't mean "pitched". For a modular synth this argues for narrow module charters, e.g. caps on tone grit/FM in fitting, or a sparsity/role penalty, so layer choice carries meaning. A rerun was bit-identical (deterministic seeds).
+
+### Paused at 4/10 hats (machine needed for a model load)
+Single-layer winners: tone 3/4 (7.98, 7.01, 7.30), metal 1/4 (SLASHER, 11.26 vs noise 11.54, a hard sample for every layer). Each tone win uses at least one broadband knob: grit 0.99, or FM 2.3–2.5 with fold. Metal chose 808 type (3) on 4/4 hats, oct 5 or 7. Working read: the 808 type is the right metal family but can't compete with a noise-capable tone, and the tone layer's broadband escape hatches decide the search. Greedy run paused at 35/40. Both scripts resume from their jsonl (`node fit/exp_ceiling.js`, `node fit/exp_modular.js`).
+
+## Rust port of the gun engine (rust/tearout-dsp)
+
+Goal: the gun engine as a dependency-free Rust crate for a plugin, sounding identical to the JS. Ported line by line (f64 math, f32 buffers, same evaluation order, mulberry32 bit-exact, JS Math.round/ToInt32 semantics), params generated from the JS SPEC by fit/gen_rust_spec.js.
+
+Parity (fit/parity.js): 136 jobs = 47 shipped presets + defaults + 80 uniform-random patches over every gun param (16 bursts, every type switch exercised) + 8 dropped-sample jobs (both routes, keyed/fixed, filters, drive). Result: worst error -138 dB re signal, max sample diff 2.4e-7 (1–2 f32 ulps), 16/136 bit-identical. The residual is what 1-ulp f64 libm differences (V8's fdlibm vs macOS libm) look like after f32 rounding. Harness check: mismatched pairs score ≥ -12 dB, so it discriminates by >120 dB.
+
+Found while building it: a JS crash when a layer delay exceeds the shot length in a fast burst (Float32Array.set offset out of bounds). Fixed in engine.js: the delayed layer is silent for that shot, which is what the Rust does.
+
+Speed: median preset 19.8 ms Rust vs 26.5 ms warm JS (1.47×). The port is 1:1, not optimized; conv/reverb FFTs and OTT band splits dominate. Plenty for re-render-on-knob-change in a plugin.

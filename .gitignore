@@ -25,3 +25,4 @@ web/snare_presets.json
 node_modules/
 .DS_Store
 __pycache__/
+rust/target/
