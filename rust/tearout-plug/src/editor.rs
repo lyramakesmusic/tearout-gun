@@ -45,11 +45,13 @@ struct Ui {
     /// level a switched-off section returns to
     mem: [f32; 8],
     presets_open: bool,
+    anchor: Option<tearout_dsp::Params>,
+    last_mutation: Option<tearout_dsp::Params>,
     rng: tearout_dsp::dsp::Rng,
 }
 
 pub fn create(params: Arc<PlugParams>, shared: Arc<Shared>, _notes: Sender<u8>) -> Option<Box<dyn Editor>> {
-    let st = Ui { tab: Tab::Stems, combined: false, preset: crate::presets::default_index(), view: None, tex: Vec::new(), seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
+    let st = Ui { tab: Tab::Stems, combined: false, preset: crate::presets::default_index(), view: None, tex: Vec::new(), seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
     let p2 = params.clone();
     create_egui_editor(params.editor_state.clone(), st, |ctx, _| setup(ctx), move |ctx, setter, st| frame(ctx, setter, st, &p2, &shared))
 }
@@ -583,19 +585,22 @@ fn strip_buttons(cx: &mut Cx, st: &mut Ui) {
         for &(dx, dy) in pips { pt.circle_filled(pos2(c.x + dx, c.y + dy), 2.0, col); }
         cx.text(pos2(c.x, c.y + 42.0), egui::Align2::CENTER_CENTER, name, sans(10.0), Color32::from_rgb(0x7a, 0x7a, 0x7c));
         if resp.clicked() {
-            let q = if k == 0 {
-                // a fresh patch: some gun preset, rolled hard
-                let presets = crate::presets::all();
-                let i = ((st.rng.next() * presets.len() as f64) as usize).min(presets.len() - 1);
-                st.preset = i;
-                crate::worker::roll(&presets[i].p, 1.0, &mut st.rng)
+            let cur = cx.p.gun.snapshot();
+            let seed = 1.0 + (st.rng.next() * 1e6).floor();
+            let mut q = if k == 0 {
+                crate::roll::roll(crate::roll::Mode::Randomize, &cur, seed, 4, 2)
             } else {
-                let cur = cx.p.gun.snapshot();
-                crate::worker::roll(&cur, (cx.p.dice_amt.value() as f64).max(0.05) * 0.5, &mut st.rng)
+                // mutations stay around the patch they started from until something else changes it
+                if st.last_mutation.as_ref().map_or(true, |m| !same(m, &cur)) { st.anchor = Some(cur.clone()); }
+                crate::roll::roll(crate::roll::Mode::Mutate, st.anchor.as_ref().unwrap_or(&cur), seed, 4, 2)
             };
-            let mut q = q;
-            q.0[NOTE] = cx.gun(NOTE);
+            q.0[NOTE] = cur.0[NOTE];
             apply(cx, &q);
+            st.last_mutation = Some(q);
         }
     }
+}
+
+fn same(a: &tearout_dsp::Params, b: &tearout_dsp::Params) -> bool {
+    (0..tearout_dsp::N).all(|i| (to_norm(&SPEC[i], a.0[i]) - to_norm(&SPEC[i], b.0[i])).abs() < 1e-4)
 }

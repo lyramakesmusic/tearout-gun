@@ -13,6 +13,7 @@ pub mod export;
 pub mod macos;
 pub mod params;
 pub mod presets;
+pub mod roll;
 pub mod worker;
 
 use params::PlugParams;
