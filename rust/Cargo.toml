@@ -5,3 +5,6 @@ resolver = "2"
 [profile.release]
 opt-level = 3
 debug = "line-tables-only"
+
+[patch."https://github.com/BillyDM/egui-baseview.git"]
+egui-baseview = { path = "vendor/egui-baseview" }

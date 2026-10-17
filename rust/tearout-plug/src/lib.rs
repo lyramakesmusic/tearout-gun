@@ -1,4 +1,4 @@
-// Tearout gun as a MIDI instrument. Notes play the rendered patch at their pitch; a new note ducks the ones
+// Tearout Farm, a MIDI instrument. Notes play the rendered patch at their pitch; a new note ducks the ones
 // still ringing.
 use crossbeam_channel::{bounded, Sender};
 use nih_plug::prelude::*;
@@ -7,6 +7,10 @@ use std::sync::Arc;
 
 pub mod analysis;
 pub mod editor;
+pub mod export;
+#[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
+pub mod macos;
 pub mod params;
 pub mod presets;
 pub mod worker;
@@ -54,14 +58,42 @@ impl Drop for Tearout {
 }
 
 impl Tearout {
+    /// Play `events` (sample offset, note, velocity) and mix every voice into `l`/`r`.
+    pub fn mix(&mut self, events: &[(usize, u8, f32)], l_out: &mut [f32], r_out: &mut [f32]) {
+        let rel_ms = self.params.duck_rel.value() as f64;
+        let dstep = (1000.0 / (rel_ms.max(1.0) * self.sr)) as f32; // duck recovery per sample toward target
+        let attack = (1000.0 / (3.0 * self.sr)) as f32; // 3 ms duck-down
+        let mut ei = 0;
+        for i in 0..l_out.len() {
+            while ei < events.len() && events[ei].0 <= i { let (_, nt, vel) = events[ei]; self.note_on(nt, vel); ei += 1; }
+            let (mut l, mut r) = (0f32, 0f32);
+            for v in self.voices.iter_mut() {
+                let ip = v.pos as usize;
+                if ip + 1 >= v.s.l.len() { v.gain = 0.0; continue; }
+                let fr = (v.pos - ip as f64) as f32;
+                let g = v.gain * v.duck;
+                l += g * (v.s.l[ip] + (v.s.l[ip + 1] - v.s.l[ip]) * fr);
+                r += g * (v.s.r[ip] + (v.s.r[ip + 1] - v.s.r[ip]) * fr);
+                v.pos += v.rate;
+                // duck down fast, then ride the target back up over the release time
+                v.duck = if v.duck > v.duck_target { (v.duck - attack).max(v.duck_target) } else { v.duck_target };
+                v.duck_target = (v.duck_target + dstep).min(1.0);
+            }
+            l_out[i] = l;
+            r_out[i] = r;
+        }
+        self.voices.retain(|v| v.gain > 0.0);
+    }
+
     fn note_on(&mut self, note: u8, vel: f32) {
+        self.shared.last_note.store(note, Ordering::Relaxed);
         let (sound, exact) = {
             let Ok(b) = self.shared.bank.try_lock() else { return };
             let dice = if self.params.dice.value() { b.dice.clone() } else { None };
             if let Some(d) = dice {
                 self.shared.dice_used.store(true, Ordering::Relaxed);
                 (Some(d), false)
-            } else if let Some(s) = b.notes.get(note as usize).cloned().flatten() {
+            } else if let Some(s) = b.notes.get(worker::note_slot(note)).cloned().flatten() {
                 (Some(s), true)
             } else {
                 (b.base.clone(), false)
@@ -81,7 +113,7 @@ impl Tearout {
 }
 
 impl Plugin for Tearout {
-    const NAME: &'static str = "Tearout Gun";
+    const NAME: &'static str = "Tearout Farm";
     const VENDOR: &'static str = "lyra";
     const URL: &'static str = "";
     const EMAIL: &'static str = "lyramakesmusic@gmail.com";
@@ -120,29 +152,8 @@ impl Plugin for Tearout {
             let note = self.params.gun.snapshot().0[tearout_dsp::id::NOTE] as u8;
             events.push((0, note, 0.8));
         }
-        let rel_ms = self.params.duck_rel.value() as f64;
-        let dstep = (1000.0 / (rel_ms.max(1.0) * self.sr)) as f32; // duck recovery per sample toward target
-        let attack = (1000.0 / (3.0 * self.sr)) as f32; // 3 ms duck-down
-        let mut ei = 0;
-        for i in 0..n {
-            while ei < events.len() && events[ei].0 <= i { let (_, nt, vel) = events[ei]; self.note_on(nt, vel); ei += 1; }
-            let (mut l, mut r) = (0f32, 0f32);
-            for v in self.voices.iter_mut() {
-                let ip = v.pos as usize;
-                if ip + 1 >= v.s.l.len() { v.gain = 0.0; continue; }
-                let fr = (v.pos - ip as f64) as f32;
-                let g = v.gain * v.duck;
-                l += g * (v.s.l[ip] + (v.s.l[ip + 1] - v.s.l[ip]) * fr);
-                r += g * (v.s.r[ip] + (v.s.r[ip + 1] - v.s.r[ip]) * fr);
-                v.pos += v.rate;
-                // duck down fast, then ride the target back up over the release time
-                v.duck = if v.duck > v.duck_target { (v.duck - attack).max(v.duck_target) } else { v.duck_target };
-                v.duck_target = (v.duck_target + dstep).min(1.0);
-            }
-            out[0][i] = l;
-            out[1][i] = r;
-        }
-        self.voices.retain(|v| v.gain > 0.0);
+        let (l, r) = out.split_at_mut(1);
+        self.mix(&events, &mut l[0][..n], &mut r[0][..n]);
         self.events = events;
         ProcessStatus::Normal
     }
@@ -150,7 +161,7 @@ impl Plugin for Tearout {
 
 impl ClapPlugin for Tearout {
     const CLAP_ID: &'static str = "com.lyra.tearout-gun";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("tearout gun synth");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Tearout Farm");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Instrument, ClapFeature::Synthesizer, ClapFeature::Stereo];

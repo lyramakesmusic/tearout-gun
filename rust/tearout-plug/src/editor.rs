@@ -44,10 +44,12 @@ struct Ui {
     sel: usize,
     /// level a switched-off section returns to
     mem: [f32; 8],
+    presets_open: bool,
+    rng: tearout_dsp::dsp::Rng,
 }
 
 pub fn create(params: Arc<PlugParams>, shared: Arc<Shared>, _notes: Sender<u8>) -> Option<Box<dyn Editor>> {
-    let st = Ui { tab: Tab::Stems, combined: false, preset: crate::presets::default_index(), view: None, tex: Vec::new(), seen: 0, sel: 3, mem: [0.8; 8] };
+    let st = Ui { tab: Tab::Stems, combined: false, preset: crate::presets::default_index(), view: None, tex: Vec::new(), seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
     let p2 = params.clone();
     create_egui_editor(params.editor_state.clone(), st, |ctx, _| setup(ctx), move |ctx, setter, st| frame(ctx, setter, st, &p2, &shared))
 }
@@ -114,10 +116,11 @@ fn frame(ctx: &Context, setter: &ParamSetter, st: &mut Ui, params: &Arc<PlugPara
         let mut cx = Cx { ui, setter, p: params };
         header(&mut cx, st);
         match st.tab {
-            Tab::Stems => { stems(&mut cx, st); core_strip(&mut cx); }
+            Tab::Stems => { stems(&mut cx, st); core_strip(&mut cx, st); }
             Tab::Knobs => knobs_tab(&mut cx, st),
             Tab::Play => play_tab(&mut cx),
         }
+        if st.presets_open { preset_menu(&mut cx, st); }
     });
 }
 
@@ -132,8 +135,12 @@ fn header(cx: &mut Cx, st: &mut Ui) {
     if cx.button(Rect::from_min_size(pos2(x - 4.0, 8.0), vec2(16.0, 24.0)), "prev", "‹", Color32::TRANSPARENT, DIM, sans(16.0)) { load_preset(cx, st, (st.preset + presets.len() - 1) % presets.len()); }
     x += 16.0;
     let name = presets.get(st.preset).map(|p| p.name.as_str()).unwrap_or("");
-    cx.text(pos2(x, y), egui::Align2::LEFT_CENTER, name, semi(14.0), TEXT);
-    x += cx.text_w(name, semi(14.0)).max(70.0) + 6.0;
+    let nw = cx.text_w(name, semi(14.0)).max(70.0);
+    let nr = Rect::from_min_size(pos2(x - 4.0, 8.0), vec2(nw + 8.0, 24.0));
+    let nresp = cx.ui.interact(nr, egui::Id::new("preset-name"), Sense::click());
+    if nresp.clicked() { st.presets_open = !st.presets_open; }
+    cx.text(pos2(x, y), egui::Align2::LEFT_CENTER, name, semi(14.0), if nresp.hovered() || st.presets_open { BRIGHT } else { TEXT });
+    x += nw + 6.0;
     if cx.button(Rect::from_min_size(pos2(x - 4.0, 8.0), vec2(16.0, 24.0)), "next", "›", Color32::TRANSPARENT, DIM, sans(16.0)) { load_preset(cx, st, (st.preset + 1) % presets.len()); }
     x += 24.0;
     // tabs
@@ -224,8 +231,17 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     let pt = cx.painter();
     let ln = &view.lanes[li];
     let col = rgb(ln.color);
-    // grip (drag-out)
-    for (dx, dy) in [(0.0, -5.0), (4.0, -5.0), (0.0, 0.0), (4.0, 0.0), (0.0, 5.0), (4.0, 5.0)] { pt.circle_filled(pos2(24.0 + dx, y + h / 2.0 + dy), 1.2, Color32::from_rgb(0x55, 0x55, 0x5a)); }
+    // grip: drag the lane out as a file (option-drag on the mix takes every stem)
+    let gr = Rect::from_min_size(pos2(14.0, y), vec2(24.0, h));
+    let gresp = cx.ui.interact(gr, egui::Id::new(("grip", li)), Sense::drag());
+    let gc = if gresp.hovered() || gresp.dragged() { BRIGHT } else { Color32::from_rgb(0x55, 0x55, 0x5a) };
+    for (dx, dy) in [(0.0, -5.0), (4.0, -5.0), (0.0, 0.0), (4.0, 0.0), (0.0, 5.0), (4.0, 5.0)] { pt.circle_filled(pos2(24.0 + dx, y + h / 2.0 + dy), 1.2, gc); }
+    if gresp.hovered() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::Grab); }
+    if gresp.drag_started() {
+        let all = li == 0 && cx.ui.input(|i| i.modifiers.alt);
+        let pick: Vec<usize> = if all { (1..view.lanes.len()).collect() } else { vec![li] };
+        drag_out(st, view, &pick);
+    }
     // label
     let lr = Rect::from_min_size(pos2(40.0, y), vec2(78.0, h));
     if cx.ui.interact(lr, egui::Id::new(("lane", li)), Sense::click()).clicked() { st.sel = li; }
@@ -400,7 +416,8 @@ const CORE: [(usize, &str, Color32); 12] = [
     (CR_MIX, "crunch", MST_C), (MST_HIGH, "high", MST_C),
 ];
 
-fn core_strip(cx: &mut Cx) {
+fn core_strip(cx: &mut Cx, st: &mut Ui) {
+    strip_buttons(cx, st);
     let x0 = 118.0;
     let step = (W - 20.0 - x0) / CORE.len() as f32;
     let dice = cx.p.dice.value();
@@ -501,4 +518,84 @@ fn play_tab(cx: &mut Cx) {
         x += 70.0;
     }
     let _ = group_name;
+}
+
+fn drag_out(st: &Ui, view: &View, lanes: &[usize]) {
+    let preset = crate::presets::all().get(st.preset).map(|p| p.name.clone()).unwrap_or_default();
+    let sr = tearout_dsp::SR as u32;
+    let paths: Vec<_> = lanes
+        .iter()
+        .filter_map(|&i| view.lanes.get(i))
+        .filter_map(|ln| crate::export::lane_file(&preset, ln.name, view.patch, &ln.l, &ln.r, sr).map_err(|e| nih_log!("export failed: {e}")).ok())
+        .collect();
+    if paths.is_empty() { return; }
+    #[cfg(target_os = "macos")]
+    if !crate::macos::drag_files(&paths) { nih_log!("drag did not start"); }
+}
+
+fn preset_menu(cx: &mut Cx, st: &mut Ui) {
+    let presets = crate::presets::all();
+    let row = 22.0;
+    let h = (presets.len() as f32 * row + 8.0).min(H - 60.0);
+    let area = Rect::from_min_size(pos2(12.0, 40.0), vec2(220.0, h));
+    let ctx = cx.ui.ctx().clone();
+    let mut pick = None;
+    let resp = egui::Area::new(egui::Id::new("preset-menu")).fixed_pos(area.min).order(egui::Order::Foreground).show(&ctx, |ui| {
+        let pt = ui.painter().clone();
+        pt.rect_filled(area.translate(vec2(0.0, 2.0)).expand(1.0), CornerRadius::same(5), Color32::from_black_alpha(90));
+        pt.rect_filled(area, CornerRadius::same(4), Color32::from_rgb(0x1c, 0x1c, 0x1e));
+        ui.set_min_size(area.size());
+        egui::ScrollArea::vertical().max_height(h - 8.0).show(ui, |ui| {
+            ui.add_space(4.0);
+            for (i, p) in presets.iter().enumerate() {
+                let (r, rr) = ui.allocate_exact_size(vec2(220.0, row), Sense::click());
+                let on = i == st.preset;
+                if rr.hovered() { ui.painter().rect_filled(r.shrink2(vec2(4.0, 1.0)), CornerRadius::same(3), Color32::from_rgb(0x2e, 0x2e, 0x31)); }
+                ui.painter().text(pos2(r.left() + 14.0, r.center().y), egui::Align2::LEFT_CENTER, &p.name, if on { semi(12.0) } else { sans(12.0) }, if on { BRIGHT } else { TEXT });
+                if rr.clicked() { pick = Some(i); }
+            }
+        });
+    });
+    if let Some(i) = pick { load_preset(cx, st, i); st.presets_open = false; }
+    else if ctx.input(|i| i.pointer.any_pressed()) && !resp.response.rect.contains(ctx.input(|i| i.pointer.interact_pos()).unwrap_or_default()) && !Rect::from_min_size(pos2(12.0, 8.0), vec2(200.0, 24.0)).contains(ctx.input(|i| i.pointer.interact_pos()).unwrap_or_default()) {
+        st.presets_open = false;
+    }
+}
+
+/// Apply a patch through the host so every change is undoable and automatable.
+fn apply(cx: &Cx, q: &tearout_dsp::Params) {
+    for k in 0..tearout_dsp::N {
+        if (cx.gun(k) - q.0[k]).abs() > 1e-9 { cx.set_val(k, q.0[k]); }
+    }
+}
+
+fn strip_buttons(cx: &mut Cx, st: &mut Ui) {
+    let cy = STRIP_TOP + 30.0;
+    let items = [("random", 40.0), ("mutate", 88.0)];
+    for (k, &(name, x)) in items.iter().enumerate() {
+        let c = pos2(x, cy);
+        let r = Rect::from_center_size(c, vec2(40.0, 40.0));
+        let resp = cx.ui.interact(r, egui::Id::new(("strip-btn", k)), Sense::click());
+        let pt = cx.painter();
+        let col = if resp.hovered() { BRIGHT } else { Color32::from_rgb(0xa8, 0xa8, 0xaa) };
+        pt.rect_stroke(Rect::from_center_size(c, vec2(26.0, 26.0)), CornerRadius::same(5), Stroke::new(1.6, col), StrokeKind::Middle);
+        let pips: &[(f32, f32)] = if k == 0 { &[(-6.0, -6.0), (6.0, -6.0), (0.0, 0.0), (-6.0, 6.0), (6.0, 6.0)] } else { &[(-5.0, 5.0), (5.0, -5.0)] };
+        for &(dx, dy) in pips { pt.circle_filled(pos2(c.x + dx, c.y + dy), 2.0, col); }
+        cx.text(pos2(c.x, c.y + 42.0), egui::Align2::CENTER_CENTER, name, sans(10.0), Color32::from_rgb(0x7a, 0x7a, 0x7c));
+        if resp.clicked() {
+            let q = if k == 0 {
+                // a fresh patch: some gun preset, rolled hard
+                let presets = crate::presets::all();
+                let i = ((st.rng.next() * presets.len() as f64) as usize).min(presets.len() - 1);
+                st.preset = i;
+                crate::worker::roll(&presets[i].p, 1.0, &mut st.rng)
+            } else {
+                let cur = cx.p.gun.snapshot();
+                crate::worker::roll(&cur, (cx.p.dice_amt.value() as f64).max(0.05) * 0.5, &mut st.rng)
+            };
+            let mut q = q;
+            q.0[NOTE] = cx.gun(NOTE);
+            apply(cx, &q);
+        }
+    }
 }

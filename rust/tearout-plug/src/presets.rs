@@ -15,6 +15,10 @@ pub fn all() -> &'static [Preset] {
             let mut p = Params::default();
             for i in 0..N { if let Some(v) = ps.get(SPEC[i].id).and_then(|v| v.as_f64()) { p.0[i] = v; } }
             p.0[tearout_dsp::id::B_SHOTS] = p.0[tearout_dsp::id::B_SHOTS].max(1.0);
+            // every preset sits on its nearest C, so a C on the keyboard plays it as designed
+            let n = p.0[tearout_dsp::id::NOTE];
+            let c = ((n / 12.0).round() * 12.0).clamp(SPEC[tearout_dsp::id::NOTE].min, SPEC[tearout_dsp::id::NOTE].max);
+            p.0[tearout_dsp::id::NOTE] = c;
             out.push(Preset { name: e["name"].as_str().unwrap_or("?").to_string(), p });
         }
         out

@@ -31,10 +31,13 @@ pub struct Lane {
     pub level_db: f64,
     pub rgba: Vec<u8>,
     pub wave: Vec<(f32, f32)>,
+    pub l: Arc<Vec<f32>>,
+    pub r: Arc<Vec<f32>>,
 }
 
 pub struct View {
     pub version: u64,
+    pub patch: u64,
     pub p: Params,
     pub lanes: Vec<Lane>,
     pub peak_db: f64,
@@ -47,11 +50,13 @@ pub struct Shared {
     pub quit: AtomicBool,
     /// set by the audio thread when it consumed the dice roll
     pub dice_used: AtomicBool,
+    /// last MIDI note played, so dice rolls and background renders start there
+    pub last_note: std::sync::atomic::AtomicU8,
 }
 
 impl Default for Shared {
     fn default() -> Self {
-        Self { bank: Mutex::new(Bank { notes: vec![None; 128], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true) }
+        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36) }
     }
 }
 
@@ -66,6 +71,11 @@ pub const MIX_COLOR: [u8; 3] = [230, 230, 230];
 pub const REV_COLOR: [u8; 3] = [154, 160, 166];
 
 /// MIDI note folded by octaves into the engine's note range.
+/// Number of distinct engine notes; the bank keeps one render per slot.
+pub const NOTE_SLOTS: usize = (SPEC[NOTE].max - SPEC[NOTE].min) as usize + 1;
+
+pub fn note_slot(n: u8) -> usize { (fold_note(n) - SPEC[NOTE].min) as usize }
+
 pub fn fold_note(n: u8) -> f64 {
     let s = &SPEC[NOTE];
     let mut m = n as f64;
@@ -115,6 +125,13 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
     let mut last_view = 0u64;
     let mut rng = tearout_dsp::dsp::Rng::new(1234.0);
     let mut pending_view: Option<Params> = None;
+    let mut have = vec![false; NOTE_SLOTS];
+    let render_note = |eng: &mut Engine, p: &Params, slot: usize| {
+        let mut q = p.clone();
+        q.0[NOTE] = SPEC[NOTE].min + slot as f64;
+        let o = eng.render(&q);
+        Arc::new(Sound { l: o.l, r: o.r, note: q.0[NOTE] })
+    };
     while !sh.quit.load(Ordering::Relaxed) {
         let p = params.gun.snapshot();
         let k = hash(&p, false);
@@ -122,34 +139,43 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
             last = k;
             let o = main.render(&p);
             let base = Arc::new(Sound { l: o.l, r: o.r, note: p.0[NOTE] });
+            let home = (p.0[NOTE] - SPEC[NOTE].min) as usize;
+            have.iter_mut().for_each(|h| *h = false);
+            have[home] = true;
             let mut b = sh.bank.lock().unwrap();
-            b.base = Some(base);
             for n in b.notes.iter_mut() { *n = None; }
+            b.notes[home] = Some(base.clone());
+            b.base = Some(base);
             b.dice = None;
             drop(b);
             sh.dice_used.store(true, Ordering::Relaxed);
             pending_view = Some(p.clone());
         }
-        // note renders the audio thread asked for
-        match notes.recv_timeout(Duration::from_millis(8)) {
+        let busy = have.iter().any(|h| !h) || pending_view.is_some();
+        // notes the audio thread asked for come first
+        match notes.recv_timeout(Duration::from_millis(if busy { 0 } else { 8 })) {
             Ok(n) => {
-                let mut q = p.clone();
-                q.0[NOTE] = fold_note(n);
-                let o = other.render(&q);
-                sh.bank.lock().unwrap().notes[n as usize] = Some(Arc::new(Sound { l: o.l, r: o.r, note: q.0[NOTE] }));
+                let slot = note_slot(n);
+                if !have[slot] {
+                    let s = render_note(&mut other, &p, slot);
+                    have[slot] = true;
+                    sh.bank.lock().unwrap().notes[slot] = Some(s);
+                }
                 continue;
             }
             Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => {}
         }
         if params.dice.value() && sh.dice_used.swap(false, Ordering::Relaxed) {
-            let q = roll(&p, params.dice_amt.value() as f64, &mut rng);
+            let mut q = roll(&p, params.dice_amt.value() as f64, &mut rng);
+            q.0[NOTE] = fold_note(sh.last_note.load(Ordering::Relaxed));
             let o = other.render(&q);
             sh.bank.lock().unwrap().dice = Some(Arc::new(Sound { l: o.l, r: o.r, note: q.0[NOTE] }));
+            continue;
         }
         // the view is the slow part: build it only once the patch has settled for one poll
         if let Some(vp) = pending_view.take() {
-            if hash(&params.gun.snapshot(), false) != hash(&vp, false) { pending_view = None; continue; }
+            if hash(&params.gun.snapshot(), false) != hash(&vp, false) { continue; }
             let kv = hash(&vp, false);
             if kv == last_view { continue; }
             last_view = kv;
@@ -158,6 +184,14 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
             let v = build_view(&vp, &mix, &mut stem_eng, sh.view_version.load(Ordering::Relaxed) + 1);
             *sh.view.lock().unwrap() = Some(Arc::new(v));
             sh.view_version.fetch_add(1, Ordering::Release);
+            continue;
+        }
+        // fill the rest of the keyboard, nearest the last played note first
+        let at = note_slot(sh.last_note.load(Ordering::Relaxed)) as i64;
+        if let Some(slot) = (0..NOTE_SLOTS).filter(|&s| !have[s]).min_by_key(|&s| (s as i64 - at).abs()) {
+            let s = render_note(&mut other, &p, slot);
+            have[slot] = true;
+            sh.bank.lock().unwrap().notes[slot] = Some(s);
         }
     }
 }
@@ -194,12 +228,12 @@ fn build_view(p: &Params, mix: &Sound, eng: &mut [Engine], version: u64) -> View
                 sc.spawn(move || {
                     let m: Vec<f32> = l.iter().zip(r).map(|(a, b)| 0.5 * (a + b)).collect();
                     let g = reassigned(&m, sr, t1, SPEC_COLS, SPEC_ROWS, 16);
-                    Lane { name, color: *col, level_db: *lvl, rgba: colorize(&g, *col), wave: wave_cols(l, r, t1, WAVE_COLS) }
+                    Lane { name, color: *col, level_db: *lvl, rgba: colorize(&g, *col), wave: wave_cols(l, r, t1, WAVE_COLS), l: Arc::new(l.clone()), r: Arc::new(r.clone()) }
                 })
             })
             .collect();
         hs.into_iter().map(|h| h.join().unwrap()).collect()
     });
     let pk = mix.l.iter().chain(&mix.r).fold(0f32, |a, &b| a.max(b.abs())) as f64;
-    View { version, p: p.clone(), lanes, peak_db: 20.0 * pk.max(1e-9).log10() }
+    View { version, patch: hash(p, false), p: p.clone(), lanes, peak_db: 20.0 * pk.max(1e-9).log10() }
 }
