@@ -533,6 +533,9 @@ fn drag_out(st: &Ui, view: &View, lanes: &[usize]) {
     if paths.is_empty() { return; }
     #[cfg(target_os = "macos")]
     if !crate::macos::drag_files(&paths) { nih_log!("drag did not start"); }
+    // elsewhere the grip writes the stems and opens their folder for dragging from the file manager
+    #[cfg(not(target_os = "macos"))]
+    let _ = std::process::Command::new(if cfg!(windows) { "explorer" } else { "xdg-open" }).arg(crate::export::dir()).spawn();
 }
 
 fn preset_menu(cx: &mut Cx, st: &mut Ui) {
