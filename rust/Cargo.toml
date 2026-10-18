@@ -8,3 +8,6 @@ debug = "line-tables-only"
 
 [patch."https://github.com/BillyDM/egui-baseview.git"]
 egui-baseview = { path = "vendor/egui-baseview" }
+
+[patch."https://github.com/robbert-vdh/nih-plug.git"]
+nih_plug_egui = { path = "vendor/nih_plug_egui" }

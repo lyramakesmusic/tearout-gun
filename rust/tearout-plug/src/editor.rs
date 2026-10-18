@@ -68,6 +68,7 @@ fn setup(ctx: &Context) {
     let mut v = egui::Visuals::dark();
     v.panel_fill = BG;
     ctx.set_visuals(v);
+    ctx.options_mut(|o| o.zoom_with_keyboard = false);
 }
 
 fn sans(s: f32) -> FontId { FontId::new(s, FontFamily::Proportional) }
@@ -114,6 +115,10 @@ fn frame(ctx: &Context, setter: &ParamSetter, st: &mut Ui, params: &Arc<PlugPara
         }
     }
     ctx.request_repaint_after(std::time::Duration::from_millis(33));
+    // the whole layout scales with the window, keeping its aspect
+    let (ww, wh) = params.editor_state.size();
+    let scale = (ww as f32 / W).min(wh as f32 / H).clamp(MIN_SCALE, MAX_SCALE);
+    if (ctx.zoom_factor() - scale).abs() > 1e-3 { ctx.set_zoom_factor(scale); }
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(BG)).show(ctx, |ui| {
         let mut cx = Cx { ui, setter, p: params };
         header(&mut cx, st);
@@ -123,7 +128,26 @@ fn frame(ctx: &Context, setter: &ParamSetter, st: &mut Ui, params: &Arc<PlugPara
             Tab::Play => play_tab(&mut cx),
         }
         if st.presets_open { preset_menu(&mut cx, st); }
+        resize_corner(&mut cx, scale);
     });
+}
+
+const MIN_SCALE: f32 = 0.75;
+const MAX_SCALE: f32 = 2.5;
+
+fn resize_corner(cx: &mut Cx, scale: f32) {
+    let r = Rect::from_min_max(pos2(W - 16.0, H - 16.0), pos2(W, H));
+    let resp = cx.ui.interact(r, egui::Id::new("resize"), Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeNwSe);
+    if resp.dragged() {
+        if let Some(p) = resp.interact_pointer_pos() {
+            // pointer in window pixels, so the scale follows the mouse as the zoom changes under it
+            let s = ((p.x + 4.0) * scale / W).max((p.y + 4.0) * scale / H).clamp(MIN_SCALE, MAX_SCALE);
+            if (s - scale).abs() > 0.004 { cx.p.editor_state.set_requested_size(((W * s).round() as u32, (H * s).round() as u32)); }
+        }
+    }
+    let col = if resp.hovered() || resp.dragged() { DIM } else { DIMMER };
+    let pt = cx.painter();
+    for k in [4.0, 8.0, 12.0] { pt.line_segment([pos2(W - 3.0 - k, H - 3.0), pos2(W - 3.0, H - 3.0 - k)], Stroke::new(1.0, col)); }
 }
 
 // ───────────────────────── header

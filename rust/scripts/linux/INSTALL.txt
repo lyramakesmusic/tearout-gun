@@ -1,0 +1,23 @@
+Tearout Farm 0.1.0 beta
+
+One Tearout Farm.vst3 runs on Mac (Apple Silicon + Intel), Windows, and Linux (x86_64 + arm64).
+
+Mac
+  Copy Tearout Farm.vst3 into ~/Library/Audio/Plug-Ins/VST3/
+  Then run once in Terminal:
+    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Tearout Farm.vst3"
+
+Windows
+  Copy Tearout Farm.vst3 into C:\Program Files\Common Files\VST3\
+
+Linux
+  Copy Tearout Farm.vst3 into ~/.vst3/
+
+NixOS / Nix
+  In this folder:
+    nix build
+    ln -s "$PWD/result/lib/vst3/Tearout Farm.vst3" ~/.vst3/
+  result/lib/clap holds a CLAP build too.
+
+Stems dragged out of the plugin are saved in ~/Music/Tearout Farm.
+Drag the bottom-right corner to resize the window.
