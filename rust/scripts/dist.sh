@@ -1,5 +1,6 @@
 #!/bin/sh
-# Builds the multi-platform release zip: target/dist/Tearout-Farm-<version>.zip
+# Builds the multi-platform release: target/dist/Tearout Farm.vst3.zip (the plugin) and
+# target/dist/Tearout Farm (nix).zip (the plugin plus flake.nix and INSTALL.txt)
 # Mac universal builds here; Linux (x86_64, arm64) and Windows build on gx10-3, which holds
 # rustup, zig, cargo-zigbuild, cargo-xwin and the Ubuntu focal sysroots ~/x86root and ~/armroot.
 set -e
@@ -26,6 +27,7 @@ scp -q $H:tf/rust/target/x86_64-unknown-linux-gnu/release/libtearout_plug.so "$B
 scp -q $H:tf/rust/target/aarch64-unknown-linux-gnu/release/libtearout_plug.so "$B/Contents/aarch64-linux/Tearout Farm.so"
 cp scripts/linux/flake.nix scripts/linux/INSTALL.txt "$O/"
 codesign --force --sign - "$B" && codesign --verify --strict "$B"
-rm -f "target/dist/Tearout-Farm-$V.zip"
-(cd target/dist/pkg && ditto -c -k --keepParent "Tearout Farm" "../Tearout-Farm-$V.zip")
-echo "target/dist/Tearout-Farm-$V.zip"
+rm -f "target/dist/Tearout Farm.vst3.zip" "target/dist/Tearout Farm (nix).zip"
+(cd "$O" && ditto -c -k --keepParent "Tearout Farm.vst3" "../../Tearout Farm.vst3.zip")
+(cd target/dist/pkg && ditto -c -k --keepParent "Tearout Farm" "../Tearout Farm (nix).zip")
+ls target/dist/*.zip
