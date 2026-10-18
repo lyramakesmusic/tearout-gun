@@ -51,7 +51,7 @@ struct Ui {
 }
 
 pub fn create(params: Arc<PlugParams>, shared: Arc<Shared>, _notes: Sender<u8>) -> Option<Box<dyn Editor>> {
-    let st = Ui { tab: Tab::Stems, combined: false, preset: crate::presets::default_index(), view: None, tex: Vec::new(), seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
+    let st = Ui { tab: Tab::Stems, combined: false, preset: params.preset.read().ok().and_then(|n| crate::presets::index_of(&n)).unwrap_or_else(crate::presets::default_index), view: None, tex: Vec::new(), seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
     let p2 = params.clone();
     create_egui_editor(params.editor_state.clone(), st, |ctx, _| setup(ctx), move |ctx, setter, st| frame(ctx, setter, st, &p2, &shared))
 }
