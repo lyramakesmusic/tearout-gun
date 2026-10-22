@@ -469,6 +469,8 @@ fn save_preset(cx: &Cx, st: &mut Ui, name: &str) {
 // ───────────────────────── stems
 
 const LANE_X: f32 = 126.0;
+/// Where a stem's name starts, right of its dice.
+const NAME_X: f32 = 57.0;
 const LANES_TOP: f32 = 50.0;
 const STRIP_TOP: f32 = 506.0;
 
@@ -550,13 +552,13 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
             cx.ui.painter().with_clip_rect(nr).galley(pos2(nr.left() + 4.0, nr.center().y - galley.size().y / 2.0), galley, col);
             if resp.clicked() { st.sel = li; st.renaming = Some((slot, shown)); }
         }
-    } else if li != 0 { cx.text(pos2(50.0, y + h / 2.0 - 7.0), egui::Align2::LEFT_CENTER, ln.name, semi(12.0), col); }
+    } else if li != 0 { cx.text(pos2(NAME_X, y + h / 2.0 - 7.0), egui::Align2::LEFT_CENTER, ln.name, semi(12.0), col); }
     // a stem's level reads live from its knob and drags up and down; double-click resets it
     let lvl_id = crate::worker::LAYERS.iter().find(|l| l.0 == ln.name).map(|l| l.1).or((ln.name == "reverb").then_some(REV_LVL));
     let lvl = match lvl_id { Some(i) => format!("{:.1}", cx.gun(i)), None => format!("{:.1} pk", view.peak_db) }.replace('-', "−");
     let mut lc = DIMMER;
     if let Some(i) = lvl_id {
-        let vr = Rect::from_min_size(pos2(46.0, y + h / 2.0 + 1.0), vec2(48.0, 16.0));
+        let vr = Rect::from_min_size(pos2(if lane_group(ln.name).is_some() { NAME_X - 4.0 } else { 46.0 }, y + h / 2.0 + 1.0), vec2(48.0, 16.0));
         let resp = cx.ui.interact(vr, egui::Id::new(("lane-lvl", li)), Sense::click_and_drag());
         let fp = &cx.p.gun.p[i];
         vertical_drag(cx, &resp, fp);
@@ -582,7 +584,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         if aresp.drag_started() { drag_out(st, view, &(1..view.lanes.len()).collect::<Vec<_>>()); }
         cx.text(pos2(118.0, row), egui::Align2::RIGHT_CENTER, &format!("{:.1} pk", view.peak_db).replace('-', "−"), mono(9.0), Color32::from_rgb(0x4c, 0x4c, 0x50));
     } else {
-        cx.text(pos2(50.0, y + h / 2.0 + 9.0), egui::Align2::LEFT_CENTER, &lvl, mono(10.0), lc);
+        cx.text(pos2(if lane_group(ln.name).is_some() { NAME_X } else { 50.0 }, y + h / 2.0 + 9.0), egui::Align2::LEFT_CENTER, &lvl, mono(10.0), lc);
     }
     if let Some(slot) = crate::worker::sample_slot(ln.name) {
         let xr = Rect::from_center_size(pos2(LANE_X - 14.0, y + h / 2.0 - 7.0), vec2(16.0, 16.0));
@@ -602,6 +604,17 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         let on = cx.sh.locked.lock().unwrap().contains(&g);
         if resp.clicked() { let mut l = cx.sh.locked.lock().unwrap(); if on { l.retain(|&x| x != g); } else { l.push(g); } }
         lock_icon(&pt, lr.center(), on, if on { col } else if resp.hovered() { BRIGHT } else { Color32::from_rgb(0x55, 0x55, 0x5a) });
+        // this stem's own dice: everything else holds still (a locked stem's dice rest)
+        for (k, dy) in [(0usize, -7.0f32), (1, 9.0)] {
+            let c = pos2(46.0, y + h / 2.0 + dy);
+            let resp = cx.ui.interact(Rect::from_center_size(c, vec2(14.0, 14.0)), egui::Id::new(("lane-die", li, k)), Sense::click());
+            let tint = if on { Color32::from_rgb(0x2e, 0x2e, 0x32) } else if resp.hovered() { BRIGHT } else { Color32::from_rgb(0x55, 0x55, 0x5a) };
+            die_icon(&pt, c, k == 0, tint);
+            if resp.clicked() && !on {
+                let others: Vec<&'static str> = SPEC.iter().map(|s| s.group).filter(|&x| x != g).fold(Vec::new(), |mut v, x| { if !v.contains(&x) { v.push(x); } v });
+                reroll(cx, st, k == 0, &others);
+            }
+        }
     }
     // spectrogram; dragging it takes the lane out as a file (option-drag on the mix takes every stem)
     let r = Rect::from_min_size(pos2(LANE_X, y), vec2(W - 20.0 - LANE_X, h));
@@ -1429,20 +1442,33 @@ fn strip_buttons(cx: &mut Cx, st: &mut Ui) {
         for &(dx, dy) in pips { pt.circle_filled(pos2(c.x + dx, c.y + dy), 2.0, col); }
         cx.text(pos2(c.x, c.y + 42.0), egui::Align2::CENTER_CENTER, name, sans(10.0), Color32::from_rgb(0x7a, 0x7a, 0x7c));
         if resp.clicked() {
-            let cur = cx.p.gun.snapshot();
-            let seed = 1.0 + (st.rng.next() * 1e6).floor();
-            let mut q = if k == 0 {
-                crate::roll::roll(crate::roll::Mode::Randomize, &cur, seed, 4, 2, &cx.sh.locked.lock().unwrap().clone())
-            } else {
-                // mutations stay around the patch they started from until something else changes it
-                if st.last_mutation.as_ref().map_or(true, |m| !same(m, &cur)) { st.anchor = Some(cur.clone()); }
-                crate::roll::roll(crate::roll::Mode::Mutate, st.anchor.as_ref().unwrap_or(&cur), seed, 4, 2, &cx.sh.locked.lock().unwrap().clone())
-            };
-            q.0[NOTE] = cur.0[NOTE];
-            apply(cx, &q);
-            st.last_mutation = Some(q);
+            let locked = cx.sh.locked.lock().unwrap().clone();
+            reroll(cx, st, k == 0, &locked);
         }
     }
+}
+
+/// Randomize (or mutate) every knob outside the `locked` groups.
+fn reroll(cx: &mut Cx, st: &mut Ui, randomize: bool, locked: &[&'static str]) {
+    let cur = cx.p.gun.snapshot();
+    let seed = 1.0 + (st.rng.next() * 1e6).floor();
+    let mut q = if randomize {
+        crate::roll::roll(crate::roll::Mode::Randomize, &cur, seed, 4, 2, locked)
+    } else {
+        // mutations stay around the patch they started from until something else changes it
+        if st.last_mutation.as_ref().map_or(true, |m| !same(m, &cur)) { st.anchor = Some(cur.clone()); }
+        crate::roll::roll(crate::roll::Mode::Mutate, st.anchor.as_ref().unwrap_or(&cur), seed, 4, 2, locked)
+    };
+    q.0[NOTE] = cur.0[NOTE];
+    apply(cx, &q);
+    st.last_mutation = Some(q);
+}
+
+/// A small die: five pips rolls fresh, two pips mutates.
+fn die_icon(pt: &egui::Painter, c: Pos2, five: bool, col: Color32) {
+    pt.rect_stroke(Rect::from_center_size(c, vec2(11.0, 11.0)), CornerRadius::same(2), Stroke::new(1.1, col), StrokeKind::Middle);
+    let pips: &[(f32, f32)] = if five { &[(-2.6, -2.6), (2.6, -2.6), (0.0, 0.0), (-2.6, 2.6), (2.6, 2.6)] } else { &[(-2.2, 2.2), (2.2, -2.2)] };
+    for &(dx, dy) in pips { pt.circle_filled(pos2(c.x + dx, c.y + dy), 1.0, col); }
 }
 
 fn same(a: &tearout_dsp::Params, b: &tearout_dsp::Params) -> bool {
