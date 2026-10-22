@@ -68,3 +68,39 @@ pub fn drag_files(paths: &[std::path::PathBuf]) -> bool {
         session != nil
     }
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CGPoint { x: f64, y: f64 }
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventCreate(source: *const std::ffi::c_void) -> *mut std::ffi::c_void;
+    fn CGEventGetLocation(ev: *mut std::ffi::c_void) -> CGPoint;
+    fn CGWarpMouseCursorPosition(p: CGPoint) -> i32;
+    fn CGAssociateMouseAndMouseCursorPosition(connected: u8) -> i32;
+    fn CGMainDisplayID() -> u32;
+    fn CGDisplayHideCursor(display: u32) -> i32;
+    fn CGDisplayShowCursor(display: u32) -> i32;
+}
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" { fn CFRelease(p: *mut std::ffi::c_void); }
+
+/// Screen position of the cursor, in points from the top-left of the main display.
+pub fn cursor() -> (f64, f64) {
+    unsafe {
+        let ev = CGEventCreate(std::ptr::null());
+        if ev.is_null() { return (0.0, 0.0); }
+        let p = CGEventGetLocation(ev);
+        CFRelease(ev);
+        (p.x, p.y)
+    }
+}
+pub fn warp(p: (f64, f64)) {
+    unsafe {
+        CGWarpMouseCursorPosition(CGPoint { x: p.0, y: p.1 });
+        // lifts the short freeze that follows a warp
+        CGAssociateMouseAndMouseCursorPosition(1);
+    }
+}
+pub fn show_cursor(on: bool) { unsafe { if on { CGDisplayShowCursor(CGMainDisplayID()) } else { CGDisplayHideCursor(CGMainDisplayID()) }; } }

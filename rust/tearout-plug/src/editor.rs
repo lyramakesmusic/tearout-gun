@@ -47,11 +47,15 @@ struct Ui {
     presets_open: bool,
     anchor: Option<tearout_dsp::Params>,
     last_mutation: Option<tearout_dsp::Params>,
+    /// knob groups random and mutate leave alone
+    locked: Vec<&'static str>,
+    /// sample slot whose lane gets selected once it appears
+    want_sel: Option<usize>,
     rng: tearout_dsp::dsp::Rng,
 }
 
 pub fn create(params: Arc<PlugParams>, shared: Arc<Shared>, _notes: Sender<u8>) -> Option<Box<dyn Editor>> {
-    let st = Ui { tab: Tab::Stems, combined: false, preset: params.preset.read().ok().and_then(|n| crate::presets::index_of(&n)).unwrap_or_else(crate::presets::default_index), view: None, tex: Vec::new(), seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
+    let st = Ui { tab: Tab::Stems, combined: false, preset: params.preset.read().ok().and_then(|n| crate::presets::index_of(&n)).unwrap_or_else(crate::presets::default_index), view: None, tex: Vec::new(), seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, locked: Vec::new(), want_sel: None, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
     let p2 = params.clone();
     create_egui_editor(params.editor_state.clone(), st, |ctx, _| setup(ctx), move |ctx, setter, st| frame(ctx, setter, st, &p2, &shared))
 }
@@ -110,6 +114,7 @@ fn frame(ctx: &Context, setter: &ParamSetter, st: &mut Ui, params: &Arc<PlugPara
     if v != st.seen {
         if let Some(view) = sh.view.lock().unwrap().clone() {
             st.tex = view.lanes.iter().map(|l| ctx.load_texture(l.name, egui::ColorImage::from_rgba_unmultiplied([crate::worker::SPEC_COLS, crate::worker::SPEC_ROWS], &l.rgba), egui::TextureOptions::LINEAR)).collect();
+            if let Some(k) = st.want_sel { if let Some(i) = view.lanes.iter().position(|l| crate::worker::sample_slot(l.name) == Some(k)) { st.sel = i; st.want_sel = None; } }
             st.view = Some(view);
             st.seen = v;
         }
@@ -118,7 +123,9 @@ fn frame(ctx: &Context, setter: &ParamSetter, st: &mut Ui, params: &Arc<PlugPara
     // the whole layout scales with the window, keeping its aspect
     let (ww, wh) = params.editor_state.size();
     let scale = (ww as f32 / W).min(wh as f32 / H).clamp(MIN_SCALE, MAX_SCALE);
-    if (ctx.zoom_factor() - scale).abs() > 1e-3 { ctx.set_zoom_factor(scale); }
+    // this frame's pointer events were converted to points at the zoom in effect before this frame's update
+    let input_zoom = ctx.zoom_factor();
+    if (input_zoom - scale).abs() > 1e-3 { ctx.set_zoom_factor(scale); }
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(BG)).show(ctx, |ui| {
         let mut cx = Cx { ui, setter, p: params };
         header(&mut cx, st);
@@ -128,21 +135,55 @@ fn frame(ctx: &Context, setter: &ParamSetter, st: &mut Ui, params: &Arc<PlugPara
             Tab::Play => play_tab(&mut cx),
         }
         if st.presets_open { preset_menu(&mut cx, st); }
-        resize_corner(&mut cx, scale);
+        drop_zone(&mut cx, st);
+        resize_corner(&mut cx, scale, input_zoom);
     });
 }
 
-const MIN_SCALE: f32 = 0.75;
-const MAX_SCALE: f32 = 2.5;
+const AUDIO_EXT: [&str; 5] = ["wav", "aif", "aiff", "flac", "mp3"];
 
-fn resize_corner(cx: &mut Cx, scale: f32) {
+fn is_audio(p: &std::path::Path) -> bool { p.extension().and_then(|e| e.to_str()).is_some_and(|e| AUDIO_EXT.contains(&e.to_ascii_lowercase().as_str())) }
+
+/// Audio files dragged over the editor layer into a sample slot: the one under the pointer, else the first
+/// empty one, else the selected sample lane's.
+fn drop_zone(cx: &mut Cx, st: &mut Ui) {
+    let (hover, dropped) = cx.ui.input(|i| (i.raw.hovered_files.iter().filter_map(|f| f.path.clone()).any(|p| is_audio(&p)), i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).filter(|p| is_audio(p)).collect::<Vec<_>>()));
+    if hover {
+        let zone = Rect::from_min_max(pos2(14.0, LANES_TOP - 4.0), pos2(W - 14.0, STRIP_TOP - 8.0));
+        let pt = cx.ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drop")));
+        pt.rect_filled(zone, CornerRadius::same(4), Color32::from_rgba_unmultiplied(0x10, 0x10, 0x11, 200));
+        pt.rect_stroke(zone, CornerRadius::same(4), Stroke::new(1.5, DIM), StrokeKind::Inside);
+        pt.text(zone.center(), egui::Align2::CENTER_CENTER, "layer", semi(14.0), BRIGHT);
+    }
+    if dropped.is_empty() { return; }
+    let paths = cx.p.samples.read().map(|s| s.clone()).unwrap_or_default();
+    let sel = st.view.as_ref().and_then(|v| v.lanes.get(st.sel)).and_then(|ln| crate::worker::sample_slot(ln.name));
+    let mut used: Vec<usize> = Vec::new();
+    for path in dropped {
+        let slot = (1..=3).find(|&k| paths[k - 1].is_empty() && !used.contains(&k)).or(sel).unwrap_or(3);
+        used.push(slot);
+        if let Ok(mut s) = cx.p.samples.write() { s[slot - 1] = path.to_string_lossy().into_owned(); }
+        let lvl = S1_LVL + 10 * (slot - 1);
+        if cx.gun(lvl) <= -59.0 { cx.set_val(lvl, -6.0); }
+        st.want_sel = Some(slot);
+    }
+}
+
+const MIN_SCALE: f32 = 0.75;
+const MAX_SCALE: f32 = 2.0;
+
+/// Bottom-right grip: the window corner follows the pointer; a double-click returns to 100%.
+fn resize_corner(cx: &mut Cx, scale: f32, input_zoom: f32) {
     let r = Rect::from_min_max(pos2(W - 16.0, H - 16.0), pos2(W, H));
-    let resp = cx.ui.interact(r, egui::Id::new("resize"), Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeNwSe);
-    if resp.dragged() {
+    let resp = cx.ui.interact(r, egui::Id::new("resize"), Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::ResizeNwSe);
+    let set = |s: f32| cx.p.editor_state.set_requested_size(((W * s).round() as u32, (H * s).round() as u32));
+    if resp.double_clicked() { set(1.0); }
+    else if resp.dragged() {
         if let Some(p) = resp.interact_pointer_pos() {
-            // pointer in window pixels, so the scale follows the mouse as the zoom changes under it
-            let s = ((p.x + 4.0) * scale / W).max((p.y + 4.0) * scale / H).clamp(MIN_SCALE, MAX_SCALE);
-            if (s - scale).abs() > 0.004 { cx.p.editor_state.set_requested_size(((W * s).round() as u32, (H * s).round() as u32)); }
+            // pointer in window pixels: the corner lands under the pointer whatever the zoom is
+            let px = p * input_zoom;
+            let s = ((px.x + 4.0) / W).max((px.y + 4.0) / H).clamp(MIN_SCALE, MAX_SCALE);
+            if (s - scale).abs() > 0.004 { set(s); }
         }
     }
     let col = if resp.hovered() || resp.dragged() { DIM } else { DIMMER };
@@ -275,8 +316,34 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     cx.text(pos2(50.0, y + h / 2.0 - 7.0), egui::Align2::LEFT_CENTER, ln.name, semi(12.0), col);
     let lvl = if li == 0 { format!("{:.1} pk", view.peak_db) } else { format!("{:.1}", ln.level_db) }.replace('-', "−");
     cx.text(pos2(50.0, y + h / 2.0 + 9.0), egui::Align2::LEFT_CENTER, &lvl, mono(10.0), DIMMER);
-    // spectrogram
+    if let Some(slot) = crate::worker::sample_slot(ln.name) {
+        let xr = Rect::from_center_size(pos2(108.0, y + h / 2.0 + 9.0), vec2(16.0, 16.0));
+        let resp = cx.ui.interact(xr, egui::Id::new(("unload", li)), Sense::click());
+        let c = if resp.hovered() { BRIGHT } else { Color32::from_rgb(0x55, 0x55, 0x5a) };
+        let k = 3.0;
+        pt.line_segment([xr.center() - vec2(k, k), xr.center() + vec2(k, k)], Stroke::new(1.3, c));
+        pt.line_segment([xr.center() + vec2(-k, k), xr.center() + vec2(k, -k)], Stroke::new(1.3, c));
+        if resp.clicked() {
+            if let Ok(mut s) = cx.p.samples.write() { s[slot - 1].clear(); }
+            cx.set_val(S1_LVL + 10 * (slot - 1), -60.0);
+        }
+    }
+    if let Some(g) = lane_group(ln.name) {
+        let lr = Rect::from_center_size(pos2(108.0, y + h / 2.0 + 9.0), vec2(16.0, 16.0));
+        let resp = cx.ui.interact(lr, egui::Id::new(("lock", li)), Sense::click());
+        let on = st.locked.contains(&g);
+        if resp.clicked() { if on { st.locked.retain(|&x| x != g); } else { st.locked.push(g); } }
+        lock_icon(&pt, lr.center(), on, if on { col } else if resp.hovered() { BRIGHT } else { Color32::from_rgb(0x55, 0x55, 0x5a) });
+    }
+    // spectrogram; dragging it takes the lane out as a file, like the grip
     let r = Rect::from_min_size(pos2(LANE_X, y), vec2(W - 20.0 - LANE_X, h));
+    let sresp = cx.ui.interact(r, egui::Id::new(("lane-drag", li)), Sense::drag());
+    if sresp.hovered() && !cx.ui.ctx().is_using_pointer() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::Grab); }
+    if sresp.drag_started() {
+        let all = li == 0 && cx.ui.input(|i| i.modifiers.alt);
+        let pick: Vec<usize> = if all { (1..view.lanes.len()).collect() } else { vec![li] };
+        drag_out(st, view, &pick);
+    }
     if let Some(t) = st.tex.get(li) { pt.image(t.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE); }
     // waveform
     let n = ln.wave.len();
@@ -296,6 +363,24 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     pt.add(Shape::line(top, edge));
     pt.add(Shape::line(bot, edge));
     overlays(cx, ln.name, r, col);
+}
+
+/// The knob group a stem lane's lock holds.
+fn lane_group(name: &str) -> Option<&'static str> {
+    Some(match name { "sub" => "sub", "transient" => "tr", "body" => "body", "synth" => "synth", "spice" => "spice", "reverb" => "rev", _ => return None })
+}
+
+fn lock_icon(pt: &egui::Painter, c: Pos2, on: bool, col: Color32) {
+    let body = Rect::from_center_size(pos2(c.x, c.y + 2.0), vec2(8.0, 6.0));
+    pt.rect_filled(body, CornerRadius::same(1), col);
+    // shackle: closed over the body, or lifted and swung open
+    let (lx, lift) = if on { (0.0, 0.0) } else { (2.5, 2.0) };
+    let top = c.y - 5.0 - lift;
+    let pts: Vec<Pos2> = (0..=12).map(|i| { let a = std::f32::consts::PI * i as f32 / 12.0; pos2(c.x + lx - 2.5 * a.cos(), top + 2.5 - 2.5 * a.sin()) }).collect();
+    let mut sh = vec![pos2(c.x + lx - 2.5, body.top())];
+    sh.extend(pts);
+    sh.push(pos2(c.x + lx + 2.5, if on { body.top() } else { top + 4.0 }));
+    pt.add(Shape::line(sh, Stroke::new(1.3, col)));
 }
 
 fn tx(r: Rect, ms: f64) -> f32 { r.left() + (ms / VIEW_MS) as f32 * r.width() }
@@ -419,13 +504,23 @@ fn knob(cx: &mut Cx, id: (usize, usize), fp: &FloatParam, center: Pos2, rad: f32
     pt.add(Shape::line(arc_pts(center, rad, 0.0, 1.0), Stroke::new(w, TRACK)));
     if let Some(s) = range { if s > 0.0 { pt.add(Shape::line(arc_pts(center, rad, u - s, u + s), Stroke::new(w * 2.3, alpha(col, 0.3)))); } }
     pt.add(Shape::line(arc_pts(center, rad, 0.0, u), Stroke::new(w, col)));
-    if resp.drag_started() { cx.setter.begin_set_parameter(fp); }
+    // the drag runs on an unstepped value, so stepped knobs move once the drag crosses a step
+    let raw_id = resp.id.with("raw");
+    if resp.drag_started() {
+        cx.setter.begin_set_parameter(fp);
+        cx.ui.memory_mut(|m| m.data.insert_temp(raw_id, u));
+        crate::grab::begin();
+    }
     if resp.dragged() {
         let fine = cx.ui.input(|i| i.modifiers.shift);
-        let du = -resp.drag_delta().y / if fine { 1000.0 } else { 200.0 };
-        cx.setter.set_parameter_normalized(fp, (u + du).clamp(0.0, 1.0));
+        let zoom = cx.ui.ctx().zoom_factor();
+        let dy = crate::grab::delta().map(|d| d.1 as f32 / zoom).unwrap_or(resp.drag_delta().y);
+        let du = -dy / if fine { 1000.0 } else { 200.0 };
+        let raw = (cx.ui.memory(|m| m.data.get_temp::<f32>(raw_id)).unwrap_or(u) + du).clamp(0.0, 1.0);
+        cx.ui.memory_mut(|m| m.data.insert_temp(raw_id, raw));
+        if (raw - u).abs() > 1e-7 { cx.setter.set_parameter_normalized(fp, raw); }
     }
-    if resp.drag_stopped() { cx.setter.end_set_parameter(fp); }
+    if resp.drag_stopped() { cx.setter.end_set_parameter(fp); crate::grab::end(); }
     if resp.double_clicked() {
         cx.setter.begin_set_parameter(fp);
         cx.setter.set_parameter_normalized(fp, fp.default_normalized_value());
@@ -445,6 +540,19 @@ const CORE: [(usize, &str, Color32); 12] = [
 fn core_strip(cx: &mut Cx, st: &mut Ui) {
     strip_buttons(cx, st);
     let x0 = 118.0;
+    let picked = st.view.as_ref().and_then(|v| v.lanes.get(st.sel)).and_then(|ln| crate::worker::sample_slot(ln.name).map(|k| (k, rgb(ln.color))));
+    if let Some((slot, col)) = picked {
+        let step = (W - 20.0 - x0) / CORE.len() as f32;
+        for j in 0..10 {
+            let i = S1_LVL + 10 * (slot - 1) + j;
+            let c = pos2(x0 + step * (j as f32 + 0.5), STRIP_TOP + 30.0);
+            knob(cx, (2, i), &cx.p.gun.p[i], c, 15.0, col, None);
+            let v = fmt_value(&SPEC[i], cx.gun(i));
+            cx.text(pos2(c.x, c.y + 28.0), egui::Align2::CENTER_CENTER, &v, mono(10.0), TEXT);
+            cx.text(pos2(c.x, c.y + 42.0), egui::Align2::CENTER_CENTER, SPEC[i].label, sans(10.0), Color32::from_rgb(0x7a, 0x7a, 0x7c));
+        }
+        return;
+    }
     let step = (W - 20.0 - x0) / CORE.len() as f32;
     let dice = cx.p.dice.value();
     let amt = cx.p.dice_amt.value();
@@ -511,7 +619,17 @@ fn knobs_tab(cx: &mut Cx, st: &mut Ui) {
                     cx.text(pos2(center.x, center.y + 20.0 + j as f32 * 10.0), egui::Align2::CENTER_CENTER, l, sans(8.5), Color32::from_rgb(0x7a, 0x7a, 0x7c));
                 }
             }
-            y += ((ids.len() + ncol - 1) / ncol) as f32 * kh + 10.0;
+            let mut count = ids.len();
+            if g == "burst" {
+                let (c, r) = (count % ncol, count / ncol);
+                let center = pos2(x + kw * (c as f32 + 0.5), y + r as f32 * kh + 14.0);
+                let fp = &cx.p.shots_grid;
+                let resp = knob(cx, (3, 0), fp, center, 10.5, kc, None);
+                let label = if resp.hovered() || resp.dragged() || fp.value() > 0.5 { fp.to_string() } else { "grid".to_string() };
+                cx.text(pos2(center.x, center.y + 20.0), egui::Align2::CENTER_CENTER, &label, sans(8.5), Color32::from_rgb(0x7a, 0x7a, 0x7c));
+                count += 1;
+            }
+            y += ((count + ncol - 1) / ncol) as f32 * kh + 10.0;
         }
         x += ncol as f32 * kw + 7.0;
     }
@@ -557,9 +675,14 @@ fn drag_out(st: &Ui, view: &View, lanes: &[usize]) {
     if paths.is_empty() { return; }
     #[cfg(target_os = "macos")]
     if !crate::macos::drag_files(&paths) { nih_log!("drag did not start"); }
-    // elsewhere the grip writes the stems and opens their folder for dragging from the file manager
-    #[cfg(not(target_os = "macos"))]
-    let _ = std::process::Command::new(if cfg!(windows) { "explorer" } else { "xdg-open" }).arg(crate::export::dir()).spawn();
+    #[cfg(windows)]
+    if !crate::win::drag_files(&paths) { nih_log!("drag did not start"); }
+    // on Linux the stems are written and their folder opens once per session, for dragging from the file manager
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        static OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !OPENED.swap(true, std::sync::atomic::Ordering::Relaxed) { let _ = std::process::Command::new("xdg-open").arg(crate::export::dir()).spawn(); }
+    }
 }
 
 fn preset_menu(cx: &mut Cx, st: &mut Ui) {
@@ -615,11 +738,11 @@ fn strip_buttons(cx: &mut Cx, st: &mut Ui) {
             let cur = cx.p.gun.snapshot();
             let seed = 1.0 + (st.rng.next() * 1e6).floor();
             let mut q = if k == 0 {
-                crate::roll::roll(crate::roll::Mode::Randomize, &cur, seed, 4, 2)
+                crate::roll::roll(crate::roll::Mode::Randomize, &cur, seed, 4, 2, &st.locked)
             } else {
                 // mutations stay around the patch they started from until something else changes it
                 if st.last_mutation.as_ref().map_or(true, |m| !same(m, &cur)) { st.anchor = Some(cur.clone()); }
-                crate::roll::roll(crate::roll::Mode::Mutate, st.anchor.as_ref().unwrap_or(&cur), seed, 4, 2)
+                crate::roll::roll(crate::roll::Mode::Mutate, st.anchor.as_ref().unwrap_or(&cur), seed, 4, 2, &st.locked)
             };
             q.0[NOTE] = cur.0[NOTE];
             apply(cx, &q);

@@ -52,21 +52,79 @@ pub struct Shared {
     pub dice_used: AtomicBool,
     /// last MIDI note played, so dice rolls and background renders start there
     pub last_note: std::sync::atomic::AtomicU8,
+    /// which sample slots hold decoded audio
+    pub loaded: Mutex<[bool; 3]>,
+    /// host tempo in BPM, as f64 bits
+    pub tempo: AtomicU64,
+}
+
+/// The patch to render: the knobs, with the burst interval set from the host tempo when shots follow the grid.
+pub fn patch(params: &PlugParams, sh: &Shared) -> Params {
+    let mut p = params.gun.snapshot();
+    let beats = crate::params::GRID[(params.shots_grid.value().round() as usize).min(crate::params::GRID.len() - 1)].0;
+    grid_interval(&mut p, beats, f64::from_bits(sh.tempo.load(Ordering::Relaxed)));
+    p
+}
+
+/// Burst interval for `shots` spread across `beats` at `bpm`: the shots and the gap after the last one fill
+/// the span, with accel bending the spacing as the knob does.
+pub fn grid_interval(p: &mut Params, beats: f64, bpm: f64) {
+    let shots = p.0[B_SHOTS].round().max(1.0) as usize;
+    if beats <= 0.0 || shots < 2 { return; }
+    let span = beats * 60000.0 / bpm.clamp(20.0, 999.0);
+    let w = |s: usize| 2f64.powf(-p.0[B_ACCEL] * ((s - 1) as f64 / (shots - 1) as f64) * 1.5);
+    let sum: f64 = (1..shots).map(w).sum::<f64>() + w(shots - 1);
+    let s = &SPEC[B_RATE];
+    p.0[B_RATE] = (span / sum).clamp(s.min, s.max);
 }
 
 impl Default for Shared {
     fn default() -> Self {
-        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36) }
+        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36), loaded: Mutex::new([false; 3]), tempo: AtomicU64::new(150f64.to_bits()) }
     }
 }
 
-pub const LAYERS: [(&str, usize, [u8; 3]); 5] = [
+pub const LAYERS: [(&str, usize, [u8; 3]); 8] = [
     ("sub", SUB_LVL, [86, 180, 233]),
     ("transient", TR_LVL, [230, 159, 0]),
     ("body", BODY_LVL, [63, 199, 154]),
     ("synth", SYN_LVL, [204, 121, 167]),
     ("spice", SPICE_LVL, [240, 228, 66]),
+    ("sample 1", S1_LVL, [213, 94, 0]),
+    ("sample 2", S1_LVL + 10, [0, 158, 115]),
+    ("sample 3", S1_LVL + 20, [176, 196, 222]),
 ];
+
+/// Sample slot (1–3) a lane plays, if it is a sample lane.
+pub fn sample_slot(name: &str) -> Option<usize> { name.strip_prefix("sample ").and_then(|k| k.parse().ok()) }
+
+/// Decode an audio file to stereo f32 at its own rate.
+pub fn decode(path: &str) -> Result<(Vec<f32>, Vec<f32>, f64), String> {
+    use symphonia::core::{audio::SampleBuffer, codecs::DecoderOptions, formats::FormatOptions, io::MediaSourceStream, meta::MetadataOptions, probe::Hint};
+    let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mss = MediaSourceStream::new(Box::new(f), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = std::path::Path::new(path).extension().and_then(|e| e.to_str()) { hint.with_extension(ext); }
+    let probed = symphonia::default::get_probe().format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default()).map_err(|e| e.to_string())?;
+    let mut fmt = probed.format;
+    let track = fmt.default_track().ok_or("no audio track")?;
+    let (tid, rate) = (track.id, track.codec_params.sample_rate.unwrap_or(48000) as f64);
+    let mut dec = symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default()).map_err(|e| e.to_string())?;
+    let (mut l, mut r) = (Vec::new(), Vec::new());
+    // ten seconds is plenty for a layer
+    let cap = (rate * 10.0) as usize;
+    while l.len() < cap {
+        let Ok(pk) = fmt.next_packet() else { break };
+        if pk.track_id() != tid { continue; }
+        let Ok(buf) = dec.decode(&pk) else { continue };
+        let ch = buf.spec().channels.count().max(1);
+        let mut sb = SampleBuffer::<f32>::new(buf.capacity() as u64, *buf.spec());
+        sb.copy_interleaved_ref(buf);
+        for fr in sb.samples().chunks(ch) { l.push(fr[0]); r.push(if ch > 1 { fr[1] } else { fr[0] }); }
+    }
+    if l.is_empty() { return Err("no audio".into()); }
+    Ok((l, r, rate))
+}
 pub const MIX_COLOR: [u8; 3] = [230, 230, 230];
 pub const REV_COLOR: [u8; 3] = [154, 160, 166];
 
@@ -126,6 +184,7 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
     let mut rng = tearout_dsp::dsp::Rng::new(1234.0);
     let mut pending_view: Option<Params> = None;
     let mut have = vec![false; NOTE_SLOTS];
+    let mut loaded: [String; 3] = Default::default();
     let render_note = |eng: &mut Engine, p: &Params, slot: usize| {
         let mut q = p.clone();
         q.0[NOTE] = SPEC[NOTE].min + slot as f64;
@@ -133,7 +192,21 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
         Arc::new(Sound { l: o.l, r: o.r, note: q.0[NOTE] })
     };
     while !sh.quit.load(Ordering::Relaxed) {
-        let p = params.gun.snapshot();
+        let want = params.samples.read().map(|s| s.clone()).unwrap_or_default();
+        if want != loaded {
+            for k in 0..3 {
+                if want[k] == loaded[k] { continue; }
+                let audio = if want[k].is_empty() { None } else { decode(&want[k]).map_err(|e| nih_plug::nih_log!("sample {}: {e}", want[k])).ok() };
+                for e in [&mut main, &mut other].into_iter().chain(stem_eng.iter_mut()) {
+                    e.set_sample(k + 1, audio.as_ref().map(|(l, r, sr)| (&l[..], &r[..], *sr)));
+                }
+            }
+            loaded = want;
+            *sh.loaded.lock().unwrap() = [0, 1, 2].map(|k| main.has_sample(k + 1));
+            last = 0;
+            last_view = 0;
+        }
+        let p = patch(&params, &sh);
         let k = hash(&p, false);
         if k != last {
             last = k;
@@ -175,7 +248,7 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
         }
         // the view is the slow part: build it only once the patch has settled for one poll
         if let Some(vp) = pending_view.take() {
-            if hash(&params.gun.snapshot(), false) != hash(&vp, false) { continue; }
+            if hash(&patch(&params, &sh), false) != hash(&vp, false) { continue; }
             let kv = hash(&vp, false);
             if kv == last_view { continue; }
             last_view = kv;
@@ -203,7 +276,7 @@ fn build_view(p: &Params, mix: &Sound, eng: &mut [Engine], version: u64) -> View
     let mut stems: Vec<(&'static str, [u8; 3], f64, Vec<f32>, Vec<f32>)> = Vec::new();
     let (head, last) = eng.split_at_mut(LAYERS.len());
     for (k, &(name, lvl, col)) in LAYERS.iter().enumerate() {
-        if p.0[lvl] <= -59.0 { continue; }
+        if p.0[lvl] <= -59.0 || sample_slot(name).is_some_and(|slot| !head[0].has_sample(slot)) { continue; }
         let mut q = p.clone();
         for &(_, o, _) in LAYERS.iter() { if o != lvl { q.0[o] = -60.0; } }
         q.0[REV_LVL] = -60.0;

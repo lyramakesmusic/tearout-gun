@@ -122,13 +122,24 @@ fn high_band(x: &[f32]) -> f64 {
     v.iter().sum::<f64>() / v.len() as f64
 }
 
-/// Move the tops (transient, body, spice) until the 1–8 kHz band sits on the gun target.
-fn balance(e: &mut Engine, mut q: Params) -> Params {
+/// Move the unlocked tops (transient, body, spice) until the 1–8 kHz band sits on the gun target.
+fn balance(e: &mut Engine, mut q: Params, locked: &[&str]) -> Params {
+    let tops: Vec<usize> = [TR_LVL, BODY_LVL, SPICE_LVL].into_iter().filter(|&k| !locked.contains(&SPEC[k].group)).collect();
+    if tops.is_empty() { return q; }
     for _ in 0..3 {
         let d = (-17.4 - high_band(&mono_shot(e, &q).0)).clamp(-18.0, 18.0);
         if d.abs() < 1.0 { break; }
-        for k in [TR_LVL, BODY_LVL, SPICE_LVL] { if q.0[k] > -59.0 { q.0[k] = (q.0[k] + d).clamp(-58.0, 6.0); } }
+        for &k in &tops { if q.0[k] > -59.0 { q.0[k] = (q.0[k] + d).clamp(-58.0, 6.0); } }
     }
+    q
+}
+
+/// Copy every knob of the locked groups back from `p`; any lock also keeps the noise seed, which every
+/// layer draws from.
+fn keep(p: &Params, mut q: Params, locked: &[&str]) -> Params {
+    if locked.is_empty() { return q; }
+    for i in 0..N { if locked.contains(&SPEC[i].group) { q.0[i] = p.0[i]; } }
+    q.0[SEED] = p.0[SEED];
     q
 }
 
@@ -216,8 +227,9 @@ pub fn lock_penalty(x: &[f32]) -> f64 {
 #[derive(Clone, Copy, PartialEq)]
 pub enum Mode { Randomize, Mutate }
 
-/// Best of `k` candidates per thread over `threads` threads; lower score is more gun-like.
-pub fn roll(mode: Mode, p: &Params, seed: f64, threads: usize, k: usize) -> Params {
+/// Best of `k` candidates per thread over `threads` threads; lower score is more gun-like. Knobs in the
+/// `locked` groups stay as they are in `p`.
+pub fn roll(mode: Mode, p: &Params, seed: f64, threads: usize, k: usize, locked: &[&str]) -> Params {
     let limit = if mode == Mode::Mutate { (mono_shot(&mut Engine::new(), p).1 + 3.0).max(-25.0) } else { f64::INFINITY };
     let best = std::thread::scope(|sc| {
         let hs: Vec<_> = (0..threads)
@@ -228,7 +240,7 @@ pub fn roll(mode: Mode, p: &Params, seed: f64, threads: usize, k: usize) -> Para
                     let mut best: Option<(f64, Params)> = None;
                     let (mut i, mut tries) = (0, 0);
                     while i < k {
-                        let q = match mode { Mode::Mutate => mutate(p, &mut r, 0.06), Mode::Randomize => balance(&mut e, randomize(p, &mut r)) };
+                        let q = match mode { Mode::Mutate => keep(p, mutate(p, &mut r, 0.06), locked), Mode::Randomize => balance(&mut e, keep(p, randomize(p, &mut r), locked), locked) };
                         let (m, late) = mono_shot(&mut e, &q);
                         tries += 1;
                         if late > limit && tries < 3 * k { continue; }

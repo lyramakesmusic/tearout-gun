@@ -90,6 +90,9 @@ pub struct PlugParams {
     pub editor_state: Arc<EguiState>,
     #[persist = "preset"]
     pub preset: Arc<std::sync::RwLock<String>>,
+    /// Audio files layered in sample slots 1–3 (empty = no sample).
+    #[persist = "samples"]
+    pub samples: Arc<std::sync::RwLock<[String; 3]>>,
 
     #[nested(group = "gun")]
     pub gun: GunKnobs,
@@ -106,18 +109,26 @@ pub struct PlugParams {
     pub dice: BoolParam,
     #[id = "dice_amt"]
     pub dice_amt: FloatParam,
+    /// Shots spread evenly across this many host beats (0 = timed by the interval knob).
+    #[id = "shots_grid"]
+    pub shots_grid: FloatParam,
 }
+
+/// Grid lengths for burst shots, in beats.
+pub const GRID: [(f64, &str); 7] = [(0.0, "off"), (0.125, "1/32"), (0.25, "1/16"), (0.5, "1/8"), (1.0, "1/4"), (2.0, "1/2"), (4.0, "1 bar")];
 
 impl Default for PlugParams {
     fn default() -> Self {
         Self {
             editor_state: EguiState::from_size(crate::editor::W as u32, crate::editor::H as u32),
             preset: Arc::new(std::sync::RwLock::new(String::new())),
+            samples: Arc::new(std::sync::RwLock::new(Default::default())),
             gun: GunKnobs::default(),
             duck: FloatParam::new("duck", 0.7, FloatRange::Linear { min: 0.0, max: 1.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),
             duck_rel: FloatParam::new("duck release", 120.0, FloatRange::Skewed { min: 5.0, max: 2000.0, factor: 0.3 }).with_unit(" ms").with_value_to_string(Arc::new(|v| format!("{:.0}", v))),
             vel: FloatParam::new("velocity", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),
             dice: BoolParam::new("dice", false),
+            shots_grid: FloatParam::new("shots grid", 0.0, FloatRange::Linear { min: 0.0, max: (GRID.len() - 1) as f32 }).with_step_size(1.0).with_value_to_string(Arc::new(|v| GRID[(v.round() as usize).min(GRID.len() - 1)].1.to_string())),
             dice_amt: FloatParam::new("dice amount", 0.35, FloatRange::Linear { min: 0.0, max: 1.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),
         }
     }

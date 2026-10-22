@@ -8,12 +8,15 @@ use std::sync::Arc;
 pub mod analysis;
 pub mod editor;
 pub mod export;
+pub mod grab;
 #[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)]
 pub mod macos;
 pub mod params;
 pub mod presets;
 pub mod roll;
+#[cfg(windows)]
+pub mod win;
 pub mod worker;
 
 use params::PlugParams;
@@ -144,6 +147,7 @@ impl Plugin for Tearout {
         let n = buffer.samples();
         let out = buffer.as_slice();
         for ch in out.iter_mut() { ch.fill(0.0); }
+        if let Some(t) = ctx.transport().tempo { self.shared.tempo.store(t.to_bits(), Ordering::Relaxed); }
         let mut events = std::mem::take(&mut self.events);
         events.clear();
         while let Some(ev) = ctx.next_event() {

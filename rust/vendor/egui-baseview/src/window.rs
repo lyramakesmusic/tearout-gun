@@ -487,6 +487,31 @@ where
                     self.pointer_pos_in_points = None;
                     self.egui_input.events.push(egui::Event::PointerGone);
                 }
+                // files dragged over the window arrive as egui's hovered and dropped files
+                baseview::MouseEvent::DragEntered { position, data, .. } | baseview::MouseEvent::DragMoved { position, data, .. } => {
+                    let z = self.egui_ctx.zoom_factor();
+                    let pos = pos2(position.x as f32 / z, position.y as f32 / z);
+                    self.pointer_pos_in_points = Some(pos);
+                    self.egui_input.events.push(egui::Event::PointerMoved(pos));
+                    let baseview::DropData::Files(files) = data else { return EventStatus::Ignored };
+                    self.egui_input.hovered_files = files.iter().map(|f| egui::HoveredFile { path: Some(f.clone()), ..Default::default() }).collect();
+                    return EventStatus::AcceptDrop(baseview::DropEffect::Copy);
+                }
+                baseview::MouseEvent::DragLeft => {
+                    self.egui_input.hovered_files.clear();
+                    self.pointer_pos_in_points = None;
+                    self.egui_input.events.push(egui::Event::PointerGone);
+                }
+                baseview::MouseEvent::DragDropped { position, data, .. } => {
+                    self.egui_input.hovered_files.clear();
+                    let z = self.egui_ctx.zoom_factor();
+                    let pos = pos2(position.x as f32 / z, position.y as f32 / z);
+                    self.pointer_pos_in_points = Some(pos);
+                    self.egui_input.events.push(egui::Event::PointerMoved(pos));
+                    let baseview::DropData::Files(files) = data else { return EventStatus::Ignored };
+                    self.egui_input.dropped_files.extend(files.iter().map(|f| egui::DroppedFile { path: Some(f.clone()), ..Default::default() }));
+                    return EventStatus::AcceptDrop(baseview::DropEffect::Copy);
+                }
                 _ => {}
             },
             baseview::Event::Keyboard(event) => {
