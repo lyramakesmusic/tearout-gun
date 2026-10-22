@@ -382,6 +382,9 @@ pub fn render_synth(p: &Params, n: usize, sr: f64, seed: f64) -> Stereo {
 }
 
 pub fn render_spice(p: &Params, n: usize, sr: f64, r: &mut Rng) -> Buf {
+    // key: the spice frequency follows the note, relative to C1
+    let keyed;
+    let p = if js_round(p[SPICE_KEY]) != 0.0 { let mut q = p.clone(); q[SPICE_F] = p[SPICE_F] * 2f64.powf((p[NOTE] - 24.0) / 12.0); keyed = q; &keyed } else { p };
     let mut x = vec![0f32; n];
     let ty = js_round(p[SPICE_TYPE]) as i64;
     let len = (p[SPICE_LEN] * sr / 1000.0).floor() as usize;

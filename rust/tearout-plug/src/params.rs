@@ -26,8 +26,11 @@ pub fn group_name(g: &str) -> &'static str {
     }
 }
 
+/// A stepped knob whose steps have names ("saw/square/..."), as opposed to a rate unit like "/s".
+pub fn is_named(s: &Spec) -> bool { s.scale == Scale::Int && s.unit.contains('/') }
+
 pub fn fmt_value(s: &Spec, v: f64) -> String {
-    if s.unit.contains('/') {
+    if is_named(s) {
         let opts: Vec<&str> = s.unit.split('/').collect();
         let i = (v.round() as i64 - s.min as i64).clamp(0, opts.len() as i64 - 1) as usize;
         return opts[i].to_string();

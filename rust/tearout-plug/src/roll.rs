@@ -262,6 +262,9 @@ pub fn roll(mode: Mode, p: &Params, seed: f64, threads: usize, k: usize, locked:
                                 // note's octave nearest their design, as the presets do
                                 let mut q = randomize(p, &mut r);
                                 crate::presets::retune(&mut q, p.0[NOTE]);
+                                // the sub sits in the C1 octave, where a sub is heard
+                                while q.0[NOTE] + q.0[SUB_TUNE] < 24.0 && q.0[SUB_TUNE] + 12.0 <= SPEC[SUB_TUNE].max { q.0[SUB_TUNE] += 12.0; }
+                                while q.0[NOTE] + q.0[SUB_TUNE] >= 36.0 && q.0[SUB_TUNE] - 12.0 >= SPEC[SUB_TUNE].min { q.0[SUB_TUNE] -= 12.0; }
                                 let q = keep(p, q, locked);
                                 balance(&mut e, q, locked)
                             }
@@ -279,5 +282,48 @@ pub fn roll(mode: Mode, p: &Params, seed: f64, threads: usize, k: usize, locked:
             .collect();
         hs.into_iter().filter_map(|h| h.join().ok().flatten()).min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
     });
-    best.map(|b| b.1).unwrap_or_else(|| p.clone())
+    let mut q = best.map(|b| b.1).unwrap_or_else(|| p.clone());
+    // the chosen sound's sub sits on the note
+    if !locked.contains(&"sub") { if let Some(t) = sub_on_note(&mut Engine::new(), &q) { q.0[SUB_TUNE] = t; } }
+    q
+}
+
+/// The sub tuning that puts the sub's steady pitch exactly on the patch's note: pitch from the dive formula,
+/// loudness from the rendered sub (drive included). The steady part is the longest stretch within 20 dB of
+/// the peak whose pitch moves under 0.4 semitones, lasting at least 80 ms; a sub that keeps sweeping has
+/// none. Starts from the tuning's nearest octave.
+pub fn sub_on_note(e: &mut Engine, p: &Params) -> Option<f64> {
+    let mut p = p.clone();
+    p.0[SUB_TUNE] = (p.0[SUB_TUNE] / 12.0).round() * 12.0;
+    p.0[B_SHOTS] = 1.0;
+    for l in [TR_LVL, BODY_LVL, SYN_LVL, SPICE_LVL, REV_LVL, S1_LVL, S1_LVL + 10, S1_LVL + 20] { p.0[l] = -60.0; }
+    if p.0[SUB_LVL] <= -59.0 { return None; }
+    let o = e.render(&p);
+    let hop = (SR / 1000.0) as usize;
+    // loudness per ms over a 20 ms window
+    let pw: Vec<f64> = (0..o.l.len() / hop)
+        .map(|i| {
+            let a = (i * hop).saturating_sub(10 * hop);
+            let b = (i * hop + 10 * hop).min(o.l.len());
+            o.l[a..b].iter().map(|&v| (v as f64).powi(2)).sum::<f64>() / (b - a) as f64
+        })
+        .collect();
+    let pk = pw.iter().cloned().fold(0.0, f64::max);
+    if pk <= 0.0 { return None; }
+    let (tau, k, tc, dl) = (p.0[SUB_TAU] / 1000.0, p.0[SUB_K], p.0[SUB_CLICK_MS] / 1000.0, p.0[SUB_DELAY]);
+    let off = |ms: usize| { let t = ((ms as f64 - dl) / 1000.0).max(0.0); p.0[SUB_DIVE] * (-(t / tau).powf(k)).exp() + p.0[SUB_CLICK] * (-t / tc).exp() };
+    let loud = |i: usize| pw[i] > pk * 0.01;
+    let mut best = (0usize, 0usize);
+    let mut i = 0;
+    while i < pw.len() {
+        if !loud(i) { i += 1; continue; }
+        let mut j = i;
+        while j + 1 < pw.len() && loud(j + 1) && (off(i) - off(j + 1)).abs() < 0.4 { j += 1; }
+        if j - i > best.1 - best.0 { best = (i, j); }
+        i = j + 1;
+    }
+    if best.1 - best.0 < 80 { return None; }
+    let (mut a, mut w) = (0.0, 0.0);
+    for i in best.0..=best.1 { a += off(i) * pw[i]; w += pw[i]; }
+    Some((p.0[SUB_TUNE] - a / w).clamp(SPEC[SUB_TUNE].min, SPEC[SUB_TUNE].max))
 }

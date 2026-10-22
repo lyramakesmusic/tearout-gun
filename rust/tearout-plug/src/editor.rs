@@ -39,6 +39,9 @@ struct Ui {
     preset: usize,
     view: Option<Arc<View>>,
     tex: Vec<TextureHandle>,
+    title: Option<TextureHandle>,
+    /// signature, GitHub and X marks
+    credit: Option<[TextureHandle; 3]>,
     seen: u64,
     sel: usize,
     /// level a switched-off section returns to
@@ -46,6 +49,10 @@ struct Ui {
     presets_open: bool,
     anchor: Option<tearout_dsp::Params>,
     last_mutation: Option<tearout_dsp::Params>,
+    /// computer keyboard playing (standalone): on, octave of the A key, velocity
+    keys_on: bool,
+    keys_oct: i32,
+    keys_vel: f32,
     /// lanes draw their spectrogram and their waveform
     show_spec: bool,
     show_wave: bool,
@@ -57,7 +64,7 @@ struct Ui {
 }
 
 pub fn create(params: Arc<PlugParams>, shared: Arc<Shared>, _notes: Sender<u8>) -> Option<Box<dyn Editor>> {
-    let st = Ui { tab: Tab::Stems, preset: params.preset.read().ok().and_then(|n| crate::presets::index_of(&n)).unwrap_or_else(crate::presets::default_index), view: None, tex: Vec::new(), seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, want_sel: None, editing: None, show_spec: true, show_wave: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
+    let st = Ui { tab: Tab::Stems, preset: params.preset.read().ok().and_then(|n| crate::presets::index_of(&n)).unwrap_or_else(crate::presets::default_index), view: None, tex: Vec::new(), title: None, credit: None, seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, want_sel: None, editing: None, keys_on: crate::STANDALONE.load(Ordering::Relaxed), keys_oct: 2, keys_vel: 0.8, show_spec: true, show_wave: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
     let p2 = params.clone();
     params.editor_state.set_host_resizable(fit_size);
     create_egui_editor(params.editor_state.clone(), st, |ctx, _| setup(ctx), move |ctx, setter, st| frame(ctx, setter, st, &p2, &shared))
@@ -137,6 +144,7 @@ fn frame(ctx: &Context, setter: &ParamSetter, st: &mut Ui, params: &Arc<PlugPara
             Tab::Knobs => knobs_tab(&mut cx, st),
         }
         if st.presets_open { preset_menu(&mut cx, st); }
+        if crate::STANDALONE.load(Ordering::Relaxed) { computer_keys(&mut cx, st); }
         drop_zone(&mut cx, st);
         resize_corner(&mut cx, scale);
     });
@@ -217,7 +225,14 @@ fn header(cx: &mut Cx, st: &mut Ui) {
     pt.rect_filled(Rect::from_min_size(pos2(0.0, 0.0), vec2(W, 40.0)), CornerRadius::ZERO, HEAD);
     let presets = crate::presets::all();
     let y = 20.0;
-    let mut x = 20.0;
+    // wordmark
+    const TITLE: &[u8] = include_bytes!("../assets/title/title.rgba");
+    const TITLE_SIZE: [usize; 2] = [1176, 120];
+    let tex = st.title.get_or_insert_with(|| cx.ui.ctx().load_texture("title", egui::ColorImage::from_rgba_unmultiplied(TITLE_SIZE, TITLE), egui::TextureOptions::LINEAR)).id();
+    let th = 19.0;
+    let tw = th * TITLE_SIZE[0] as f32 / TITLE_SIZE[1] as f32;
+    pt.image(tex, Rect::from_min_size(pos2(16.0, y - th / 2.0), vec2(tw, th)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    let mut x = 16.0 + tw + 22.0;
     if cx.button(Rect::from_min_size(pos2(x - 4.0, 8.0), vec2(16.0, 24.0)), "prev", "‹", Color32::TRANSPARENT, DIM, sans(16.0)) { load_preset(cx, st, (st.preset + presets.len() - 1) % presets.len()); }
     x += 16.0;
     let name = presets.get(st.preset).map(|p| p.name.as_str()).unwrap_or("");
@@ -273,6 +288,18 @@ fn header(cx: &mut Cx, st: &mut Ui) {
     pt.add(Shape::convex_polygon(vec![pos2(c.x - 4.0, c.y - 6.0), pos2(c.x + 7.0, c.y), pos2(c.x - 4.0, c.y + 6.0)], BG, Stroke::NONE));
     if resp.clicked() { AUDITION.store(true, Ordering::Relaxed); }
     rx -= 28.0 + 12.0;
+    if crate::STANDALONE.load(Ordering::Relaxed) {
+        // computer keyboard: lit while the keys play notes (M toggles)
+        let kr = Rect::from_center_size(pos2(rx - 14.0, y), vec2(28.0, 24.0));
+        let resp = cx.ui.interact(kr, egui::Id::new("keys"), Sense::click());
+        if resp.clicked() { st.keys_on = !st.keys_on; }
+        let c = if st.keys_on { BRIGHT } else if resp.hovered() { DIM } else { Color32::from_rgb(0x55, 0x55, 0x5a) };
+        let body = Rect::from_center_size(kr.center(), vec2(20.0, 12.0));
+        pt.rect_stroke(body, CornerRadius::same(2), Stroke::new(1.3, c), StrokeKind::Middle);
+        for k in 1..5 { let x = body.left() + k as f32 * 4.0; pt.line_segment([pos2(x, body.top()), pos2(x, body.bottom())], Stroke::new(1.0, c)); }
+        if st.keys_on { cx.text(pos2(kr.center().x, kr.bottom() + 5.0), egui::Align2::CENTER_CENTER, &format!("C{}", st.keys_oct - 1), mono(8.0), DIM); }
+        rx -= 28.0 + 10.0;
+    }
     let note = note_name(cx.gun(NOTE));
     let nw = cx.text_w(&note, mono(12.0));
     cx.text(pos2(rx, y), egui::Align2::RIGHT_CENTER, &note, mono(12.0), DIM);
@@ -320,11 +347,12 @@ fn stems(cx: &mut Cx, st: &mut Ui) {
     let lanes: Vec<usize> = (0..view.lanes.len()).collect();
     let avail = STRIP_TOP - LANES_TOP - 12.0;
     let gap = 6.0;
-    let want: f32 = lanes.iter().map(|&i| if i == 0 { 92.0 } else { 78.0 }).sum::<f32>() + gap * (lanes.len() as f32 - 1.0);
+    // the mix stands taller than its stems
+    let want: f32 = lanes.iter().map(|&i| if i == 0 { 130.0 } else { 72.0 }).sum::<f32>() + gap * (lanes.len() as f32 - 1.0);
     let k = (avail / want).min(1.0);
     let mut y = LANES_TOP;
     for &li in &lanes {
-        let h = (if li == 0 { 92.0 } else { 78.0 }) * k;
+        let h = (if li == 0 { 130.0 } else { 72.0 }) * k;
         lane(cx, st, &view, li, y, h);
         y += h + gap;
     }
@@ -386,7 +414,10 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     // spectrogram; dragging it takes the lane out as a file (option-drag on the mix takes every stem)
     let r = Rect::from_min_size(pos2(LANE_X, y), vec2(W - 20.0 - LANE_X, h));
     let sresp = cx.ui.interact(r, egui::Id::new(("lane-drag", li)), Sense::drag());
-    if sresp.hovered() && !cx.ui.ctx().is_using_pointer() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::Grab); }
+    if sresp.hovered() && !cx.ui.ctx().is_using_pointer() {
+        cx.ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        pt.rect_filled(r, CornerRadius::ZERO, Color32::from_white_alpha(10));
+    }
     if sresp.drag_started() {
         let all = li == 0 && cx.ui.input(|i| i.modifiers.alt);
         let pick: Vec<usize> = if all { (1..view.lanes.len()).collect() } else { vec![li] };
@@ -398,7 +429,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     let n = ln.wave.len();
     let (cy, a) = (r.center().y, r.height() * 0.46);
     let xs = |c: usize| r.left() + (c as f32 + 0.5) / n as f32 * r.width();
-    let fill = Color32::from_rgba_unmultiplied(255, 255, 255, 18);
+    let fill = Color32::from_rgba_unmultiplied(255, 255, 255, 9);
     let mut top = Vec::with_capacity(n);
     let mut bot = Vec::with_capacity(n);
     for (c, &(hi, lo)) in ln.wave.iter().enumerate() {
@@ -408,7 +439,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         top.push(pos2(x, y0));
         bot.push(pos2(x, y1));
     }
-    let edge = Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 46));
+    let edge = Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 24));
     pt.add(Shape::line(top, edge));
     pt.add(Shape::line(bot, edge));
     overlays(cx, ln.name, r, col);
@@ -567,18 +598,24 @@ fn knob(cx: &mut Cx, id: (usize, usize), fp: &FloatParam, center: Pos2, rad: f32
     resp
 }
 
-fn is_enum(s: &tearout_dsp::Spec) -> bool { s.unit.contains('/') }
+/// A choice between named options, or a stepped value with at most eight steps.
+fn is_choice(s: &tearout_dsp::Spec) -> bool { crate::params::is_named(s) || (s.scale == tearout_dsp::Scale::Int && s.max - s.min <= 7.0 && s.unit != "midi") }
 
-/// Gun knob `i`: a knob, or for a choice between named options a button that steps through them.
+/// Gun knob `i`: a knob, or for a choice a button that steps through the options (right-click steps back).
 /// Returns whether it drew a knob.
 fn control(cx: &mut Cx, id: (usize, usize), i: usize, center: Pos2, rad: f32, col: Color32, range: Option<f32>) -> bool {
     let s = &SPEC[i];
-    if !is_enum(s) { knob(cx, id, &cx.p.gun.p[i], center, rad, col, range); return true; }
-    let opts: Vec<&str> = s.unit.split('/').collect();
+    if !is_choice(s) { knob(cx, id, &cx.p.gun.p[i], center, rad, col, range); return true; }
+    let names: Vec<String> = (0..=(s.max - s.min) as usize).map(|k| fmt_value(s, s.min + k as f64)).collect();
+    let opts: Vec<&str> = names.iter().map(|x| x.as_str()).collect();
     let k = ((cx.gun(i).round() - s.min) as usize).min(opts.len() - 1);
-    let font = if rad > 12.0 { sans(11.0) } else { sans(9.0) };
-    let w = opts.iter().map(|o| cx.text_w(o, font.clone())).fold(0.0, f32::max) + 14.0;
-    let r = Rect::from_center_size(center, vec2(w.max(rad * 2.0 + 6.0), if rad > 12.0 { 22.0 } else { 18.0 }));
+    // the widest option fits the knob's slot
+    let slot = if rad > 12.0 { 64.0 } else { 33.0 };
+    let size = if rad > 12.0 { 11.0 } else { 9.0 };
+    let widest = opts.iter().map(|o| cx.text_w(o, sans(size))).fold(0.0, f32::max);
+    let font = sans((size * (slot - 8.0) / widest.max(1.0)).min(size));
+    let w = (widest.min(slot - 8.0) + 10.0).max(rad * 2.0 + 6.0).min(slot);
+    let r = Rect::from_center_size(center, vec2(w, if rad > 12.0 { 22.0 } else { 18.0 }));
     let resp = cx.ui.interact(r, egui::Id::new(("knob", id)), Sense::click());
     let fill = if resp.hovered() { Color32::from_rgb(0x38, 0x38, 0x3c) } else { TRACK };
     let pt = cx.painter();
@@ -700,7 +737,36 @@ const SECTIONS: [(&str, &str, Color32, Option<usize>); 10] = [
 ];
 const COLS: [(usize, &[usize]); 7] = [(3, &[0]), (4, &[1]), (6, &[2]), (4, &[3]), (2, &[4, 5]), (3, &[6]), (3, &[7, 8, 9])];
 
+/// The signature in the knobs tab's lower left, with links to GitHub and X.
+fn credit(cx: &mut Cx, st: &mut Ui) {
+    const SIG: &[u8] = include_bytes!("../assets/credit/handsig.rgba");
+    const SIG_SIZE: [usize; 2] = [692, 280];
+    const GH: &[u8] = include_bytes!("../assets/credit/github.rgba");
+    const X: &[u8] = include_bytes!("../assets/credit/x.rgba");
+    let ctx = cx.ui.ctx().clone();
+    let t = st.credit.get_or_insert_with(|| {
+        let load = |name: &str, size: [usize; 2], px: &[u8]| ctx.load_texture(name, egui::ColorImage::from_rgba_unmultiplied(size, px), egui::TextureOptions::LINEAR);
+        [load("sig", SIG_SIZE, SIG), load("github", [64, 64], GH), load("x", [64, 64], X)]
+    });
+    let ids = [t[0].id(), t[1].id(), t[2].id()];
+    let faint = Color32::from_rgb(0x2a, 0x2a, 0x2d);
+    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    let pt = cx.painter();
+    let h = 34.0;
+    let sig = Rect::from_min_size(pos2(6.0, H - h - 4.0), vec2(h * SIG_SIZE[0] as f32 / SIG_SIZE[1] as f32, h));
+    pt.image(ids[0], sig, uv, faint);
+    let mut x = sig.right() + 4.0;
+    for (k, url) in [(1, "https://github.com/lyramakesmusic"), (2, "https://x.com/_lyraaaa_")] {
+        let r = Rect::from_min_size(pos2(x, sig.bottom() - 19.0), vec2(12.0, 12.0));
+        let resp = cx.ui.interact(r.expand(3.0), egui::Id::new(("credit", k)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+        pt.image(ids[k], r, uv, if resp.hovered() { DIM } else { faint });
+        if resp.clicked() { ctx.open_url(egui::OpenUrl::new_tab(url)); }
+        x += 18.0;
+    }
+}
+
 fn knobs_tab(cx: &mut Cx, st: &mut Ui) {
+    credit(cx, st);
     let (kw, kh) = (35.0, 50.0);
     let mut x = 20.0;
     for &(ncol, secs) in COLS.iter() {
@@ -794,9 +860,10 @@ fn drag_out(st: &Ui, view: &View, lanes: &[usize]) {
     let paths: Vec<_> = lanes
         .iter()
         .filter_map(|&i| view.lanes.get(i))
-        .filter_map(|ln| crate::export::lane_file(&preset, ln.name, view.patch, &ln.l, &ln.r, sr).map_err(|e| nih_log!("export failed: {e}")).ok())
+        .filter_map(|ln| crate::export::lane_file(&preset, ln.name, &note_name(view.p.0[NOTE]).replace('♯', "#"), view.patch, &ln.l, &ln.r, sr).map_err(|e| nih_log!("export failed: {e}")).ok())
         .collect();
     if paths.is_empty() { return; }
+    nih_log!("drag out: {} file(s), first {}", paths.len(), paths[0].display());
     #[cfg(target_os = "macos")]
     if !crate::macos::drag_files(&paths) { nih_log!("drag did not start"); }
     #[cfg(windows)]
@@ -835,6 +902,29 @@ fn preset_menu(cx: &mut Cx, st: &mut Ui) {
     if let Some(i) = pick { load_preset(cx, st, i); st.presets_open = false; }
     else if ctx.input(|i| i.pointer.any_pressed()) && !resp.response.rect.contains(ctx.input(|i| i.pointer.interact_pos()).unwrap_or_default()) && !Rect::from_min_size(pos2(12.0, 8.0), vec2(200.0, 24.0)).contains(ctx.input(|i| i.pointer.interact_pos()).unwrap_or_default()) {
         st.presets_open = false;
+    }
+}
+
+/// Ableton's computer MIDI keyboard: A..; play from C of the current octave, W E T Y U O P are the sharps,
+/// Z/X step the octave, C/V the velocity, M switches it on and off.
+fn computer_keys(cx: &mut Cx, st: &mut Ui) {
+    use egui::Key::*;
+    const NOTES: [(egui::Key, i32); 17] = [(A, 0), (W, 1), (S, 2), (E, 3), (D, 4), (F, 5), (T, 6), (G, 7), (Y, 8), (H, 9), (U, 10), (J, 11), (K, 12), (O, 13), (L, 14), (P, 15), (Semicolon, 16)];
+    if cx.ui.ctx().wants_keyboard_input() { return; }
+    let presses: Vec<egui::Key> = cx.ui.input(|i| i.events.iter().filter_map(|e| match e { egui::Event::Key { key, pressed: true, repeat: false, .. } => Some(*key), _ => None }).collect());
+    for key in presses {
+        if key == M { st.keys_on = !st.keys_on; continue; }
+        if !st.keys_on { continue; }
+        match key {
+            Z => st.keys_oct = (st.keys_oct - 1).max(0),
+            X => st.keys_oct = (st.keys_oct + 1).min(8),
+            C => st.keys_vel = (st.keys_vel - 0.15).max(0.05),
+            V => st.keys_vel = (st.keys_vel + 0.15).min(1.0),
+            _ => if let Some(&(_, k)) = NOTES.iter().find(|n| n.0 == key) {
+                let note = (12 * st.keys_oct + k).clamp(0, 127) as u8;
+                let _ = cx.sh.keys.0.try_send((note, st.keys_vel));
+            },
+        }
     }
 }
 

@@ -4,7 +4,6 @@ use crate::egui::Vec2;
 use crate::egui::ViewportCommand;
 use crate::EguiState;
 use baseview::gl::GlConfig;
-use baseview::PhySize;
 use baseview::{Size, WindowHandle, WindowOpenOptions, WindowScalePolicy};
 use crossbeam::atomic::AtomicCell;
 use egui_baseview::egui::Context;

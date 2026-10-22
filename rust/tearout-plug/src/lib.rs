@@ -25,6 +25,9 @@ use worker::{fold_note, Shared, Sound};
 
 const MAX_VOICES: usize = 16;
 
+/// Set by the standalone app, where the editor plays from the computer keyboard.
+pub static STANDALONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 struct Voice {
     s: Arc<Sound>,
     pos: f64,
@@ -207,6 +210,7 @@ impl Plugin for Tearout {
         while let Some(ev) = ctx.next_event() {
             if let NoteEvent::NoteOn { timing, note, velocity, .. } = ev { events.push((timing as usize, note, velocity)); }
         }
+        while let Ok((note, vel)) = self.shared.keys.1.try_recv() { events.push((0, note, vel)); }
         if editor::AUDITION.swap(false, Ordering::Relaxed) {
             let note = self.params.gun.snapshot().0[tearout_dsp::id::NOTE] as u8;
             events.push((0, note, 0.8));

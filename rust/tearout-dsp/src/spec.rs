@@ -3,7 +3,7 @@
 pub enum Scale { Lin, Log, Int }
 #[derive(Clone, Copy, Debug)]
 pub struct Spec { pub id: &'static str, pub group: &'static str, pub label: &'static str, pub min: f64, pub max: f64, pub def: f64, pub scale: Scale, pub unit: &'static str, pub fit: bool }
-pub const N: usize = 197;
+pub const N: usize = 198;
 pub const SPEC: [Spec; N] = [
   Spec { id: "note", group: "global", label: "note", min: 21.0, max: 47.0, def: 26.0, scale: Scale::Int, unit: "midi", fit: true },
   Spec { id: "len", group: "global", label: "length", min: 200.0, max: 1500.0, def: 900.0, scale: Scale::Lin, unit: "ms", fit: false },
@@ -154,6 +154,7 @@ pub const SPEC: [Spec; N] = [
   Spec { id: "spice_density", group: "spice", label: "density", min: 1.0, max: 300.0, def: 30.0, scale: Scale::Log, unit: "/s", fit: true },
   Spec { id: "spice_len", group: "spice", label: "length", min: 5.0, max: 800.0, def: 200.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "spice_hp", group: "spice", label: "highpass", min: 20.0, max: 4000.0, def: 300.0, scale: Scale::Log, unit: "Hz", fit: true },
+  Spec { id: "spice_key", group: "spice", label: "tracking", min: 0.0, max: 1.0, def: 0.0, scale: Scale::Int, unit: "fixed/key", fit: true },
   Spec { id: "rev_lvl", group: "rev", label: "level", min: -60.0, max: 6.0, def: -18.0, scale: Scale::Lin, unit: "dB", fit: true },
   Spec { id: "rev_type", group: "rev", label: "IR", min: 0.0, max: 4.0, def: 0.0, scale: Scale::Int, unit: "plate/metal/whip/spring/room", fit: true },
   Spec { id: "rev_size", group: "rev", label: "size", min: 20.0, max: 2500.0, def: 350.0, scale: Scale::Log, unit: "ms", fit: true },
@@ -354,52 +355,53 @@ pub mod id {
   pub const SPICE_DENSITY: usize = 146;
   pub const SPICE_LEN: usize = 147;
   pub const SPICE_HP: usize = 148;
-  pub const REV_LVL: usize = 149;
-  pub const REV_TYPE: usize = 150;
-  pub const REV_SIZE: usize = 151;
-  pub const REV_CHAR: usize = 152;
-  pub const REV_TONE: usize = 153;
-  pub const REV_PRE: usize = 154;
-  pub const REV_HP: usize = 155;
-  pub const CR_MIX: usize = 156;
-  pub const CR_HP: usize = 157;
-  pub const CR_MUD: usize = 158;
-  pub const CR_PK_F: usize = 159;
-  pub const CR_PK_G: usize = 160;
-  pub const CR_DRIVE1: usize = 161;
-  pub const CR_HARD1: usize = 162;
-  pub const CR_DISP_N: usize = 163;
-  pub const CR_DISP_F: usize = 164;
-  pub const CR_DISP_Q: usize = 165;
-  pub const CR_CONV: usize = 166;
-  pub const CR_CONV_TYPE: usize = 167;
-  pub const CR_CONV_LEN: usize = 168;
-  pub const CR_CONV_CHAR: usize = 169;
-  pub const CR_DRIVE2: usize = 170;
-  pub const CR_RACK: usize = 171;
-  pub const CR_RACK_DEPTH: usize = 172;
-  pub const CR_PP: usize = 173;
-  pub const CR_PP_MS: usize = 174;
-  pub const CR_PP_FB: usize = 175;
-  pub const CR_FS: usize = 176;
-  pub const CR_FS_WET: usize = 177;
-  pub const MST_SUB_IN: usize = 178;
-  pub const MST_SWELL: usize = 179;
-  pub const MST_FALL: usize = 180;
-  pub const MST_SNAP: usize = 181;
-  pub const MST_OTT: usize = 182;
-  pub const MST_OTT_UP: usize = 183;
-  pub const MST_OTT_TIME: usize = 184;
-  pub const MST_DRIVE: usize = 185;
-  pub const MST_HARD: usize = 186;
-  pub const MST_MONO: usize = 187;
-  pub const MST_LOW: usize = 188;
-  pub const MST_MID: usize = 189;
-  pub const MST_HIGH: usize = 190;
-  pub const B_SHOTS: usize = 191;
-  pub const B_RATE: usize = 192;
-  pub const B_ACCEL: usize = 193;
-  pub const B_DRIFT: usize = 194;
-  pub const B_JITTER: usize = 195;
-  pub const B_GATE: usize = 196;
+  pub const SPICE_KEY: usize = 149;
+  pub const REV_LVL: usize = 150;
+  pub const REV_TYPE: usize = 151;
+  pub const REV_SIZE: usize = 152;
+  pub const REV_CHAR: usize = 153;
+  pub const REV_TONE: usize = 154;
+  pub const REV_PRE: usize = 155;
+  pub const REV_HP: usize = 156;
+  pub const CR_MIX: usize = 157;
+  pub const CR_HP: usize = 158;
+  pub const CR_MUD: usize = 159;
+  pub const CR_PK_F: usize = 160;
+  pub const CR_PK_G: usize = 161;
+  pub const CR_DRIVE1: usize = 162;
+  pub const CR_HARD1: usize = 163;
+  pub const CR_DISP_N: usize = 164;
+  pub const CR_DISP_F: usize = 165;
+  pub const CR_DISP_Q: usize = 166;
+  pub const CR_CONV: usize = 167;
+  pub const CR_CONV_TYPE: usize = 168;
+  pub const CR_CONV_LEN: usize = 169;
+  pub const CR_CONV_CHAR: usize = 170;
+  pub const CR_DRIVE2: usize = 171;
+  pub const CR_RACK: usize = 172;
+  pub const CR_RACK_DEPTH: usize = 173;
+  pub const CR_PP: usize = 174;
+  pub const CR_PP_MS: usize = 175;
+  pub const CR_PP_FB: usize = 176;
+  pub const CR_FS: usize = 177;
+  pub const CR_FS_WET: usize = 178;
+  pub const MST_SUB_IN: usize = 179;
+  pub const MST_SWELL: usize = 180;
+  pub const MST_FALL: usize = 181;
+  pub const MST_SNAP: usize = 182;
+  pub const MST_OTT: usize = 183;
+  pub const MST_OTT_UP: usize = 184;
+  pub const MST_OTT_TIME: usize = 185;
+  pub const MST_DRIVE: usize = 186;
+  pub const MST_HARD: usize = 187;
+  pub const MST_MONO: usize = 188;
+  pub const MST_LOW: usize = 189;
+  pub const MST_MID: usize = 190;
+  pub const MST_HIGH: usize = 191;
+  pub const B_SHOTS: usize = 192;
+  pub const B_RATE: usize = 193;
+  pub const B_ACCEL: usize = 194;
+  pub const B_DRIFT: usize = 195;
+  pub const B_JITTER: usize = 196;
+  pub const B_GATE: usize = 197;
 }

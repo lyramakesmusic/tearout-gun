@@ -177,6 +177,7 @@ export const SPEC = [
   { id: 'spice_density', g: 'spice', label: 'density', min: 1, max: 300, def: 30, scale: 'log', unit: '/s' },
   { id: 'spice_len', g: 'spice', label: 'length', min: 5, max: 800, def: 200, scale: 'log', unit: 'ms' },
   { id: 'spice_hp', g: 'spice', label: 'highpass', min: 20, max: 4000, def: 300, scale: 'log', unit: 'Hz' },
+  { id: 'spice_key', g: 'spice', label: 'tracking', min: 0, max: 1, def: 0, scale: 'int', unit: 'fixed/key' },
 
   // REVERB — convolver with synthesized IRs
   { id: 'rev_lvl', g: 'rev', label: 'level', min: -60, max: 6, def: -18, unit: 'dB' },
@@ -686,6 +687,8 @@ function renderSynth(p, n, sr, seed) {
 }
 
 function renderSpice(p, n, sr, r) {
+  // key: the spice frequency follows the note, relative to C1
+  if (Math.round(p.spice_key || 0)) p = { ...p, spice_f: p.spice_f * Math.pow(2, (p.note - 24) / 12) };
   const x = new Float32Array(n), type = Math.round(p.spice_type), len = Math.floor(p.spice_len * sr / 1000);
   if (type === 0) { // comb ping
     const d = Math.max(2, sr / p.spice_f), fb = Math.pow(0.001, d / Math.max(1, len));

@@ -2514,6 +2514,7 @@ name = "tearout-plug"
 version = "0.1.0"
 dependencies = [
  "cocoa",
+ "cpal",
  "crossbeam-channel",
  "nih_plug",
  "nih_plug_egui",
