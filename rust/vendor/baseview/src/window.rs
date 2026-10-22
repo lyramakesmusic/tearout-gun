@@ -110,6 +110,12 @@ impl<'a> Window<'a> {
         self.window.focus()
     }
 
+    /// Hand the keyboard back to whatever had it before [`Window::focus`] (Windows).
+    pub fn release_focus(&mut self) {
+        #[cfg(target_os = "windows")]
+        self.window.release_focus();
+    }
+
     /// If provided, then an OpenGL context will be created for this window. You'll be able to
     /// access this context through [crate::Window::gl_context].
     #[cfg(feature = "opengl")]

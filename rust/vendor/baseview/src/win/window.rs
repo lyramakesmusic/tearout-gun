@@ -506,6 +506,8 @@ pub(super) struct WindowState {
     window_info: RefCell<WindowInfo>,
     _parent_handle: Option<ParentHandle>,
     keyboard_state: RefCell<KeyboardState>,
+    /// the window that had the keyboard before `focus` took it
+    prev_focus: Cell<HWND>,
     mouse_button_counter: Cell<usize>,
     mouse_was_outside_window: RefCell<bool>,
     cursor_icon: Cell<MouseCursor>,
@@ -713,6 +715,7 @@ impl Window<'_> {
                 _parent_handle: parent_handle,
                 keyboard_state: RefCell::new(KeyboardState::new()),
                 mouse_button_counter: Cell::new(0),
+                prev_focus: Cell::new(null_mut()),
                 mouse_was_outside_window: RefCell::new(true),
                 cursor_icon: Cell::new(MouseCursor::Default),
                 // The Window refers to this `WindowState`, so this `handler` needs to be
@@ -809,7 +812,21 @@ impl Window<'_> {
 
     pub fn focus(&mut self) {
         unsafe {
+            let prev = GetFocus();
+            if prev != self.state.hwnd {
+                self.state.prev_focus.set(prev);
+            }
             SetFocus(self.state.hwnd);
+        }
+    }
+
+    /// Hand the keyboard back to the window that had it before `focus`.
+    pub fn release_focus(&mut self) {
+        unsafe {
+            let prev = self.state.prev_focus.replace(null_mut());
+            if GetFocus() == self.state.hwnd && !prev.is_null() && winapi::um::winuser::IsWindow(prev) != 0 {
+                SetFocus(prev);
+            }
         }
     }
 

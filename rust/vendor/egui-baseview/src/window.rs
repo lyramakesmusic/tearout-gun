@@ -83,6 +83,8 @@ where
     user_update: U,
 
     egui_ctx: egui::Context,
+    /// a text field holds the keyboard it took from the host
+    borrowed_keys: bool,
     viewport_id: egui::ViewportId,
     start_time: Instant,
     egui_input: egui::RawInput,
@@ -184,6 +186,7 @@ where
             user_update: update,
 
             egui_ctx,
+            borrowed_keys: false,
             viewport_id,
             start_time,
             egui_input,
@@ -396,10 +399,16 @@ where
             window.set_mouse_cursor(cursor_icon);
         }
 
-        // a focused text field takes the keyboard from the host
+        // a focused text field borrows the keyboard from the host, and hands it back when editing ends
         #[cfg(not(target_os = "macos"))]
-        if self.egui_ctx.wants_keyboard_input() && !window.has_focus() {
-            window.focus();
+        {
+            let typing = self.egui_ctx.wants_keyboard_input();
+            if typing && !window.has_focus() {
+                window.focus();
+            } else if !typing && self.borrowed_keys {
+                window.release_focus();
+            }
+            self.borrowed_keys = typing;
         }
 
         // A temporary workaround for keyboard input not working sometimes in Windows.
