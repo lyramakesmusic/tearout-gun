@@ -616,7 +616,21 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         let rr = Rect::from_min_max(r.min, pos2(r.left() + r.width() * ((1.0 - u0) / (u1 - u0)).min(1.0), r.bottom()));
         pt.image(t.id(), rr, Rect::from_min_max(pos2(u0, 0.0), pos2(u1.min(1.0), 1.0)), Color32::WHITE);
     }
-    if !st.show_wave { if st.show_handles { overlays(cx, ln.name, r, col, onset(ln)); } return; }
+    if !st.show_wave {
+        if !st.show_spec {
+            // with both views off, the lane keeps a faint outline of its sound in its own colour
+            let nall = ln.wave.len();
+            let (c0, c1) = (((u0 * nall as f32) as usize).min(nall), ((u1 * nall as f32).ceil() as usize).min(nall));
+            let colw = r.width() / ((u1 - u0) * nall as f32);
+            let (cy, a) = (r.center().y, r.height() * 0.46);
+            for (k, &(hi, lo)) in ln.wave[c0..c1].iter().enumerate() {
+                let x = r.left() + ((c0 + k) as f32 - u0 * nall as f32) * colw;
+                pt.rect_filled(Rect::from_min_max(pos2(x, cy - hi * a), pos2(x + colw, (cy - lo * a).max(cy - hi * a + 0.5))), CornerRadius::ZERO, alpha(col, 0.14));
+            }
+        }
+        if st.show_handles { overlays(cx, ln.name, r, col, sounding(ln)); }
+        return;
+    }
     // waveform
     let nall = ln.wave.len();
     let (c0, c1) = (((u0 * nall as f32) as usize).min(nall), ((u1 * nall as f32).ceil() as usize).min(nall));
@@ -639,7 +653,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     let edge = Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 14));
     pt.add(Shape::line(top, edge));
     pt.add(Shape::line(bot, edge));
-    if st.show_handles { overlays(cx, ln.name, r, col, onset(ln)); }
+    if st.show_handles { overlays(cx, ln.name, r, col, sounding(ln)); }
 }
 
 /// The knob group a stem lane's lock holds.
@@ -720,11 +734,12 @@ fn env_curve(cx: &mut Cx, id: &str, r: Rect, knobs: [usize; 5]) {
     }
 }
 
-/// When a lane first sounds (within 30 dB of its peak), in ms.
-fn onset(ln: &crate::worker::Lane) -> Option<f64> {
+/// When a lane first and last sounds (within 30 dB of its peak), in ms.
+fn sounding(ln: &crate::worker::Lane) -> Option<(f64, f64)> {
     let pk = ln.l.iter().fold(0f32, |a, &v| a.max(v.abs()));
     if pk <= 0.0 { return None; }
-    ln.l.iter().position(|&v| v.abs() > pk * 0.03).map(|i| i as f64 * 1000.0 / tearout_dsp::SR)
+    let ms = |i: usize| i as f64 * 1000.0 / tearout_dsp::SR;
+    Some((ms(ln.l.iter().position(|&v| v.abs() > pk * 0.03)?), ms(ln.l.iter().rposition(|&v| v.abs() > pk * 0.03)?)))
 }
 
 thread_local! {
@@ -791,7 +806,7 @@ fn dashed(cx: &Cx, a: Pos2, b: Pos2, col: Color32) {
     cx.painter().extend(Shape::dashed_line(&[a, b], Stroke::new(1.0, col), 3.0, 4.0));
 }
 
-fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32, onset_ms: Option<f64>) {
+fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32, spans_ms: Option<(f64, f64)>) {
     let pt = cx.painter();
     let clip = pt.clip_rect();
     let _ = clip;
@@ -839,25 +854,25 @@ fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32, onset_ms: Option<f64
         }
         "reverb" => hold_marker(cx, "rev_size", r, REV_SIZE, "size"),
         "spice" => {
-            // where the bleeps start and where they end
+            // the dots sit on the first and last bleeps; the start dot moves the layer (left of zero crops
+            // into it), the end dot rescales the length so the last bleep lands under it and the first stays
             let (d, l) = (cx.gun(SPICE_DELAY), cx.gun(SPICE_LEN));
             let y = r.center().y;
-            // the start dot sits on the first bleep; dragging it moves the layer (left of zero crops into it)
-            let onset = onset_ms.unwrap_or(d.max(0.0));
-            if let Some(p) = handle(cx, "spice_delay", pos2(tx(r, onset), y), col, true, (true, false)) {
+            let (on, off) = spans_ms.unwrap_or((d.max(0.0), d + l));
+            if let Some(_p) = handle(cx, "spice_delay", pos2(tx(r, on), y), col, true, (true, false)) {
                 let dx = cx.ui.input(|i| i.pointer.delta().x);
-                let _ = p;
-                cx.set_val(SPICE_DELAY, (d + (dx / r.width()) as f64 * view_span()).clamp(SPEC[SPICE_DELAY].min, SPEC[SPICE_DELAY].max));
+                if dx != 0.0 { cx.set_val(SPICE_DELAY, (d + (dx / r.width()) as f64 * view_span()).clamp(SPEC[SPICE_DELAY].min, SPEC[SPICE_DELAY].max)); }
             }
-            if d + l < view_end() {
-                if let Some(p) = handle(cx, "spice_len", pos2(tx(r, d + l), y), col, true, (true, false)) {
-                    // the bleeps spread across the length, so the first one moves with it: the delay moves back
-                    // by as much, and the start stays put
-                    let nl = (tms(r, p.x) - d).clamp(SPEC[SPICE_LEN].min, SPEC[SPICE_LEN].max);
-                    if (nl - l).abs() > 1e-6 {
-                        let lead = (onset - d).max(0.0);
-                        cx.set_val(SPICE_DELAY, (onset - lead * nl / l.max(1.0)).clamp(SPEC[SPICE_DELAY].min, SPEC[SPICE_DELAY].max));
+            if off < view_end() && off > on + 1.0 {
+                if let Some(_p) = handle(cx, "spice_len", pos2(tx(r, off), y), col, true, (true, false)) {
+                    let dx = cx.ui.input(|i| i.pointer.delta().x);
+                    if dx != 0.0 {
+                        let want = (off + (dx / r.width()) as f64 * view_span()).max(on + 2.0);
+                        // both bleeps sit at fixed fractions of the length past the delay
+                        let (a, b) = ((on - d) / l.max(1.0), (off - d) / l.max(1.0));
+                        let nl = ((want - on) / (b - a).max(1e-3)).clamp(SPEC[SPICE_LEN].min, SPEC[SPICE_LEN].max);
                         cx.set_val(SPICE_LEN, nl);
+                        cx.set_val(SPICE_DELAY, (on - a * nl).clamp(SPEC[SPICE_DELAY].min, SPEC[SPICE_DELAY].max));
                     }
                 }
             }
