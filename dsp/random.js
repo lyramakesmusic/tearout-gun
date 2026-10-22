@@ -4,6 +4,9 @@ import { balance } from './archetypes.js';
 
 function gauss(r) { let u = 0; while (!u) u = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r()); }
 
+// Chance per roll that each unfitted feature switch comes on.
+const FEATURE_ODDS = 0.06;
+
 // priors: { mean, sd, guns: [params...] } from fit/build_priors.js. Anchor on a fitted gun, jitter around it.
 export function randomize(P, priors, locked = new Set(), r = Math.random) {
   const Q = { ...P, engine: 0 };
@@ -12,6 +15,13 @@ export function randomize(P, priors, locked = new Set(), r = Math.random) {
     if (!inEngine(s, 'gun') || locked.has(s.g) || s.g.startsWith('sample') || s.id === 'len' || (s.g === 'burst' && s.id !== 'b_jitter')) continue;
     if (s.id === 'seed') { Q.seed = 1 + Math.floor(r() * 9999); continue; }
     const fitted = anchor && s.id in anchor;
+    // a knob the fit never set whose default sits at a range end is a feature switch (layer delays and
+    // swells, zap, stutter, synth, vowels): it stays at its default unless this roll turns it on
+    if (!fitted && priors?.mean?.[s.id] == null && (s.def === s.min || s.def === s.max)) {
+      const off = toNorm(s, s.def);
+      Q[s.id] = r() < FEATURE_ODDS ? fromNorm(s, off + Math.abs(gauss(r)) * 0.22 * (s.def === s.max ? -1 : 1)) : s.def;
+      continue;
+    }
     const base = fitted ? toNorm(s, anchor[s.id]) : priors?.mean?.[s.id] ?? toNorm(s, s.def);
     const sd = fitted ? 0.08 : priors?.sd?.[s.id] ?? 0.22;
     let u = base + gauss(r) * sd;

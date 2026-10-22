@@ -75,6 +75,14 @@ pub struct EguiState {
     /// Whether the editor's window is currently open.
     #[serde(skip)]
     open: AtomicBool,
+
+    /// A size the host resized the window to, for the editor to follow on its next frame.
+    #[serde(skip)]
+    host_size: AtomicCell<Option<(u32, u32)>>,
+
+    /// Maps a host-proposed logical size to the nearest accepted one; set when the host may resize.
+    #[serde(skip)]
+    constraint: AtomicCell<Option<fn((u32, u32)) -> (u32, u32)>>,
 }
 
 impl<'a> PersistentField<'a, EguiState> for Arc<EguiState> {
@@ -98,6 +106,8 @@ impl EguiState {
             size: AtomicCell::new((width, height)),
             requested_size: Default::default(),
             open: AtomicBool::new(false),
+            host_size: Default::default(),
+            constraint: Default::default(),
         })
     }
 
@@ -115,5 +125,10 @@ impl EguiState {
     /// Set the new size that will be used to resize the window if the host allows.
     pub fn set_requested_size(&self, new_size: (u32, u32)) {
         self.requested_size.store(Some(new_size));
+    }
+
+    /// Let the host resize the window, snapping each proposed logical size through `constrain`.
+    pub fn set_host_resizable(&self, constrain: fn((u32, u32)) -> (u32, u32)) {
+        self.constraint.store(Some(constrain));
     }
 }

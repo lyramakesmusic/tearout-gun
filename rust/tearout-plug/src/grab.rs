@@ -32,6 +32,14 @@ pub fn delta() -> Option<(f64, f64)> {
     None
 }
 
+/// Screen position of the cursor where it can be read: points on mac, pixels on Windows.
+pub fn screen_cursor() -> Option<(f64, f64)> {
+    #[cfg(any(target_os = "macos", windows))]
+    return Some(os::cursor());
+    #[allow(unreachable_code)]
+    None
+}
+
 pub fn end() {
     #[cfg(any(target_os = "macos", windows))]
     if let Some(a) = ANCHOR.lock().unwrap().take() { os::warp(a); os::show_cursor(true); }

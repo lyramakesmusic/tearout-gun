@@ -107,20 +107,25 @@ where
             move |egui_ctx, queue, state| {
                 let setter = ParamSetter::new(context.as_ref());
 
-                // If the window was requested to resize
+                let _ = &queue;
+                // The editor asked for a new size: the host resizes its window, and the view
+                // follows in logical units (the window's resize event brings the physical size).
                 if let Some(new_size) = egui_state.requested_size.swap(None) {
-                    // Ask the plugin host to resize to self.size()
                     if context.request_resize() {
-                        // Resize the content of egui window
-                        queue.resize(PhySize::new(new_size.0, new_size.1));
                         egui_ctx.send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(
                             new_size.0 as f32,
                             new_size.1 as f32,
                         )));
-
-                        // Update the state
                         egui_state.size.store(new_size);
                     }
+                }
+                // The host resized its window: the view follows.
+                if let Some(new_size) = egui_state.host_size.swap(None) {
+                    egui_ctx.send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(
+                        new_size.0 as f32,
+                        new_size.1 as f32,
+                    )));
+                    egui_state.size.store(new_size);
                 }
 
                 // For now, just always redraw. Most plugin GUIs have meters, and those almost always
@@ -149,6 +154,20 @@ where
         } else {
             self.egui_state.size()
         }
+    }
+
+    fn can_resize(&self) -> bool {
+        self.egui_state.constraint.load().is_some()
+    }
+
+    fn constrain_size(&self, size: (u32, u32)) -> (u32, u32) {
+        self.egui_state.constraint.load().map_or(size, |f| f(size))
+    }
+
+    fn set_size(&self, size: (u32, u32)) -> bool {
+        let size = self.constrain_size(size);
+        self.egui_state.host_size.store(Some(size));
+        true
     }
 
     fn set_scale_factor(&self, factor: f32) -> bool {

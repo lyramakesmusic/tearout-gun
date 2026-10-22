@@ -10,4 +10,5 @@ debug = "line-tables-only"
 egui-baseview = { path = "vendor/egui-baseview" }
 
 [patch."https://github.com/robbert-vdh/nih-plug.git"]
+nih_plug = { path = "vendor/nih-plug" }
 nih_plug_egui = { path = "vendor/nih_plug_egui" }

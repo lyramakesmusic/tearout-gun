@@ -383,12 +383,15 @@ where
             }
         }
 
-        let cursor_icon =
-            crate::translate::translate_cursor_icon(full_output.platform_output.cursor_icon);
+        let egui_cursor = full_output.platform_output.cursor_icon;
+        let cursor_icon = crate::translate::translate_cursor_icon(egui_cursor);
+        // AppKit resets the cursor as the pointer moves, so a non-arrow cursor is set again every frame
+        #[cfg(target_os = "macos")]
+        if self.current_cursor_icon != cursor_icon || egui_cursor != egui::CursorIcon::Default {
+            crate::translate::set_macos_cursor(egui_cursor);
+        }
         if self.current_cursor_icon != cursor_icon {
             self.current_cursor_icon = cursor_icon;
-
-            // TODO: Set mouse cursor for MacOS once baseview supports it.
             #[cfg(not(target_os = "macos"))]
             window.set_mouse_cursor(cursor_icon);
         }
@@ -516,8 +519,8 @@ where
             },
             baseview::Event::Keyboard(event) => {
                 use keyboard_types::Code;
-                // keys also go on to the host, so its computer keyboard keeps playing while the editor has focus
-                pass_key = true;
+                // keys go on to the host, so its computer keyboard keeps playing, unless a text field is being typed in
+                pass_key = !self.egui_ctx.wants_keyboard_input();
 
                 let pressed = event.state == keyboard_types::KeyState::Down;
 

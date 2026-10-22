@@ -42,7 +42,7 @@ pub fn write_wav(path: &std::path::Path, l: &[f32], r: &[f32], sr: u32) -> std::
 pub fn lane_file(preset: &str, lane: &str, patch: u64, l: &[f32], r: &[f32], sr: u32) -> std::io::Result<PathBuf> {
     let d = dir();
     std::fs::create_dir_all(&d)?;
-    let name = format!("{} {} {:06x}.wav", clean(if preset.is_empty() { "tearout" } else { preset }), lane, patch & 0xff_ffff);
+    let name = format!("gun-{} {} {:06x}.wav", clean(if preset.is_empty() { "tearout" } else { preset }), lane, patch & 0xff_ffff);
     let p = d.join(name);
     if !p.exists() { write_wav(&p, l, r, sr)?; }
     Ok(p)

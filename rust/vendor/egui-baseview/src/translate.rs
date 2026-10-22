@@ -116,3 +116,36 @@ pub(crate) fn translate_cursor_icon(cursor: egui::CursorIcon) -> baseview::Mouse
         egui::CursorIcon::ZoomOut => baseview::MouseCursor::ZoomOut,
     }
 }
+
+/// Show `cursor` with AppKit's cursors (the diagonal resize arrows are AppKit's private ones where present).
+#[cfg(target_os = "macos")]
+pub(crate) fn set_macos_cursor(cursor: egui::CursorIcon) {
+    use egui::CursorIcon as C;
+    use objc::runtime::{Class, Object, Sel};
+    use objc::{msg_send, sel, sel_impl};
+    let name = match cursor {
+        C::None => return,
+        C::PointingHand | C::ContextMenu => "pointingHandCursor",
+        C::Grab | C::Move | C::AllScroll => "openHandCursor",
+        C::Grabbing => "closedHandCursor",
+        C::Text => "IBeamCursor",
+        C::VerticalText => "IBeamCursorForVerticalLayout",
+        C::Crosshair | C::Cell => "crosshairCursor",
+        C::NotAllowed | C::NoDrop => "operationNotAllowedCursor",
+        C::Copy => "dragCopyCursor",
+        C::Alias => "dragLinkCursor",
+        C::ResizeHorizontal | C::ResizeColumn | C::ResizeEast | C::ResizeWest => "resizeLeftRightCursor",
+        C::ResizeVertical | C::ResizeRow | C::ResizeNorth | C::ResizeSouth => "resizeUpDownCursor",
+        C::ResizeNwSe | C::ResizeSouthEast | C::ResizeNorthWest => "_windowResizeNorthWestSouthEastCursor",
+        C::ResizeNeSw | C::ResizeNorthEast | C::ResizeSouthWest => "_windowResizeNorthEastSouthWestCursor",
+        _ => "arrowCursor",
+    };
+    unsafe {
+        let Some(cls) = Class::get("NSCursor") else { return };
+        let sel = Sel::register(name);
+        let responds: objc::runtime::BOOL = msg_send![cls, respondsToSelector: sel];
+        let responds = responds != objc::runtime::NO;
+        let cur: *mut Object = if responds { objc::__send_message(cls as *const Class as *mut Object, sel, ()).unwrap_or(std::ptr::null_mut()) } else { msg_send![cls, arrowCursor] };
+        if !cur.is_null() { let _: () = msg_send![cur, set]; }
+    }
+}

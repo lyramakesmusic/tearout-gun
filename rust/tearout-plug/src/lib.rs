@@ -9,6 +9,7 @@ pub mod analysis;
 pub mod editor;
 pub mod export;
 pub mod grab;
+pub mod limiter;
 #[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)]
 pub mod macos;
@@ -41,6 +42,7 @@ pub struct Tearout {
     voices: Vec<Voice>,
     events: Vec<(usize, u8, f32)>,
     sr: f64,
+    limiter: limiter::Limiter,
 }
 
 impl Default for Tearout {
@@ -50,7 +52,7 @@ impl Default for Tearout {
         let (tx, rx) = bounded::<u8>(64);
         let (p2, s2) = (params.clone(), shared.clone());
         let worker = std::thread::Builder::new().name("tearout-render".into()).spawn(move || worker::run(p2, s2, rx)).ok();
-        Self { params, shared, note_tx: tx, worker, voices: Vec::with_capacity(MAX_VOICES), events: Vec::with_capacity(256), sr: 48000.0 }
+        Self { params, shared, note_tx: tx, worker, voices: Vec::with_capacity(MAX_VOICES), events: Vec::with_capacity(256), sr: 48000.0, limiter: limiter::Limiter::new(48000.0) }
     }
 }
 
@@ -118,7 +120,7 @@ impl Tearout {
 
 impl Plugin for Tearout {
     const NAME: &'static str = "Tearout Farm";
-    const VENDOR: &'static str = "lyra";
+    const VENDOR: &'static str = "lyraaaa";
     const URL: &'static str = "";
     const EMAIL: &'static str = "lyramakesmusic@gmail.com";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -136,12 +138,14 @@ impl Plugin for Tearout {
         editor::create(self.params.clone(), self.shared.clone(), self.note_tx.clone())
     }
 
-    fn initialize(&mut self, _layout: &AudioIOLayout, cfg: &BufferConfig, _ctx: &mut impl InitContext<Self>) -> bool {
+    fn initialize(&mut self, _layout: &AudioIOLayout, cfg: &BufferConfig, ctx: &mut impl InitContext<Self>) -> bool {
         self.sr = cfg.sample_rate as f64;
+        self.limiter = limiter::Limiter::new(self.sr);
+        ctx.set_latency_samples(self.limiter.latency());
         true
     }
 
-    fn reset(&mut self) { self.voices.clear(); }
+    fn reset(&mut self) { self.voices.clear(); self.limiter.reset(); }
 
     fn process(&mut self, buffer: &mut Buffer, _aux: &mut AuxiliaryBuffers, ctx: &mut impl ProcessContext<Self>) -> ProcessStatus {
         let n = buffer.samples();
@@ -159,6 +163,8 @@ impl Plugin for Tearout {
         }
         let (l, r) = out.split_at_mut(1);
         self.mix(&events, &mut l[0][..n], &mut r[0][..n]);
+        let on = self.params.limit.value();
+        self.limiter.process(&mut l[0][..n], &mut r[0][..n], on);
         self.events = events;
         ProcessStatus::Normal
     }

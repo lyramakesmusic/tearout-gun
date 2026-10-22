@@ -824,6 +824,7 @@ dependencies = [
  "egui_glow",
  "keyboard-types",
  "log",
+ "objc",
  "open",
  "raw-window-handle 0.5.2",
  "thiserror 2.0.21",
@@ -1500,7 +1501,6 @@ dependencies = [
 [[package]]
 name = "nih_plug"
 version = "0.0.0"
-source = "git+https://github.com/robbert-vdh/nih-plug.git#de421011f41a6d10fc8c7a6084e4f4dee0143683"
 dependencies = [
  "anyhow",
  "anymap3",
@@ -1536,7 +1536,6 @@ dependencies = [
 [[package]]
 name = "nih_plug_derive"
 version = "0.1.0"
-source = "git+https://github.com/robbert-vdh/nih-plug.git#de421011f41a6d10fc8c7a6084e4f4dee0143683"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -1,4 +1,4 @@
-// Editor: stems (per-layer sharpened spectrograms with their waveforms and handles), combined (the mix alone),
+// Editor: stems (per-layer sharpened spectrograms with their waveforms and handles),
 // knobs (every parameter), play (note behaviour and dice). The core strip sits under the stems.
 use crate::analysis::{freq_y, y_freq};
 use crate::params::{fmt_value, group_name, note_name, PlugParams};
@@ -32,11 +32,10 @@ const REV_C: Color32 = Color32::from_rgb(0x9a, 0xa0, 0xa6);
 const MST_C: Color32 = Color32::from_rgb(0xc8, 0xc8, 0xc8);
 
 #[derive(PartialEq, Clone, Copy)]
-enum Tab { Stems, Knobs, Play }
+enum Tab { Stems, Knobs }
 
 struct Ui {
     tab: Tab,
-    combined: bool,
     preset: usize,
     view: Option<Arc<View>>,
     tex: Vec<TextureHandle>,
@@ -49,14 +48,20 @@ struct Ui {
     last_mutation: Option<tearout_dsp::Params>,
     /// knob groups random and mutate leave alone
     locked: Vec<&'static str>,
+    /// lanes draw their spectrogram and their waveform
+    show_spec: bool,
+    show_wave: bool,
+    /// value being typed into: gun knob index and the text so far
+    editing: Option<(usize, String)>,
     /// sample slot whose lane gets selected once it appears
     want_sel: Option<usize>,
     rng: tearout_dsp::dsp::Rng,
 }
 
 pub fn create(params: Arc<PlugParams>, shared: Arc<Shared>, _notes: Sender<u8>) -> Option<Box<dyn Editor>> {
-    let st = Ui { tab: Tab::Stems, combined: false, preset: params.preset.read().ok().and_then(|n| crate::presets::index_of(&n)).unwrap_or_else(crate::presets::default_index), view: None, tex: Vec::new(), seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, locked: Vec::new(), want_sel: None, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
+    let st = Ui { tab: Tab::Stems, preset: params.preset.read().ok().and_then(|n| crate::presets::index_of(&n)).unwrap_or_else(crate::presets::default_index), view: None, tex: Vec::new(), seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, locked: Vec::new(), want_sel: None, editing: None, show_spec: true, show_wave: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
     let p2 = params.clone();
+    params.editor_state.set_host_resizable(fit_size);
     create_egui_editor(params.editor_state.clone(), st, |ctx, _| setup(ctx), move |ctx, setter, st| frame(ctx, setter, st, &p2, &shared))
 }
 
@@ -85,6 +90,7 @@ struct Cx<'a> {
     ui: &'a mut egui::Ui,
     setter: &'a ParamSetter<'a>,
     p: &'a PlugParams,
+    sh: &'a Shared,
 }
 
 impl<'a> Cx<'a> {
@@ -120,29 +126,30 @@ fn frame(ctx: &Context, setter: &ParamSetter, st: &mut Ui, params: &Arc<PlugPara
         }
     }
     ctx.request_repaint_after(std::time::Duration::from_millis(33));
-    // the whole layout scales with the window, keeping its aspect
-    let (ww, wh) = params.editor_state.size();
-    let scale = (ww as f32 / W).min(wh as f32 / H).clamp(MIN_SCALE, MAX_SCALE);
-    // this frame's pointer events were converted to points at the zoom in effect before this frame's update
-    let input_zoom = ctx.zoom_factor();
-    if (input_zoom - scale).abs() > 1e-3 { ctx.set_zoom_factor(scale); }
+    // the whole layout scales with the window as it actually is, keeping its aspect
+    let zoom = ctx.zoom_factor();
+    let win = ctx.input(|i| i.screen_rect().size()) * zoom;
+    let scale = (win.x / W).min(win.y / H).clamp(MIN_SCALE, MAX_SCALE);
+    if (zoom - scale).abs() > 1e-3 { ctx.set_zoom_factor(scale); }
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(BG)).show(ctx, |ui| {
-        let mut cx = Cx { ui, setter, p: params };
+        let mut cx = Cx { ui, setter, p: params, sh };
         header(&mut cx, st);
         match st.tab {
             Tab::Stems => { stems(&mut cx, st); core_strip(&mut cx, st); }
             Tab::Knobs => knobs_tab(&mut cx, st),
-            Tab::Play => play_tab(&mut cx),
         }
         if st.presets_open { preset_menu(&mut cx, st); }
         drop_zone(&mut cx, st);
-        resize_corner(&mut cx, scale, input_zoom);
+        resize_corner(&mut cx, scale);
     });
 }
 
 const AUDIO_EXT: [&str; 5] = ["wav", "aif", "aiff", "flac", "mp3"];
 
-fn is_audio(p: &std::path::Path) -> bool { p.extension().and_then(|e| e.to_str()).is_some_and(|e| AUDIO_EXT.contains(&e.to_ascii_lowercase().as_str())) }
+/// An audio file from outside the plugin (its own dragged-out stems don't layer back in).
+fn is_audio(p: &std::path::Path) -> bool {
+    p.extension().and_then(|e| e.to_str()).is_some_and(|e| AUDIO_EXT.contains(&e.to_ascii_lowercase().as_str())) && !p.starts_with(crate::export::dir())
+}
 
 /// Audio files dragged over the editor layer into a sample slot: the one under the pointer, else the first
 /// empty one, else the selected sample lane's.
@@ -172,17 +179,29 @@ fn drop_zone(cx: &mut Cx, st: &mut Ui) {
 const MIN_SCALE: f32 = 0.75;
 const MAX_SCALE: f32 = 2.0;
 
-/// Bottom-right grip: the window corner follows the pointer; a double-click returns to 100%.
-fn resize_corner(cx: &mut Cx, scale: f32, input_zoom: f32) {
+/// Host window sizes snap to the editor's aspect, between 75% and 200%.
+fn fit_size((w, h): (u32, u32)) -> (u32, u32) {
+    let s = ((w as f32 * h as f32) / (W * H)).sqrt().clamp(MIN_SCALE, MAX_SCALE);
+    ((W * s).round() as u32, (H * s).round() as u32)
+}
+
+/// Bottom-right grip: scales with the pointer's travel on screen from where the drag began; a
+/// double-click returns to 100%.
+fn resize_corner(cx: &mut Cx, scale: f32) {
     let r = Rect::from_min_max(pos2(W - 16.0, H - 16.0), pos2(W, H));
     let resp = cx.ui.interact(r, egui::Id::new("resize"), Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::ResizeNwSe);
     let set = |s: f32| cx.p.editor_state.set_requested_size(((W * s).round() as u32, (H * s).round() as u32));
+    let start_id = egui::Id::new("resize-start");
+    if resp.drag_started() {
+        let at = crate::grab::screen_cursor().map(|c| (c.0 as f32, c.1 as f32)).or_else(|| resp.interact_pointer_pos().map(|p| (p.x * scale, p.y * scale)));
+        if let Some(at) = at { cx.ui.memory_mut(|m| m.data.insert_temp(start_id, (at, scale))); }
+    }
     if resp.double_clicked() { set(1.0); }
     else if resp.dragged() {
-        if let Some(p) = resp.interact_pointer_pos() {
-            // pointer in window pixels: the corner lands under the pointer whatever the zoom is
-            let px = p * input_zoom;
-            let s = ((px.x + 4.0) / W).max((px.y + 4.0) / H).clamp(MIN_SCALE, MAX_SCALE);
+        let start = cx.ui.memory(|m| m.data.get_temp::<((f32, f32), f32)>(start_id));
+        let now = crate::grab::screen_cursor().map(|c| (c.0 as f32, c.1 as f32)).or_else(|| resp.interact_pointer_pos().map(|p| (p.x * scale, p.y * scale)));
+        if let (Some(((x0, y0), s0)), Some((x, y))) = (start, now) {
+            let s = (s0 + ((x - x0) / W).max((y - y0) / H)).clamp(MIN_SCALE, MAX_SCALE);
             if (s - scale).abs() > 0.004 { set(s); }
         }
     }
@@ -211,7 +230,7 @@ fn header(cx: &mut Cx, st: &mut Ui) {
     if cx.button(Rect::from_min_size(pos2(x - 4.0, 8.0), vec2(16.0, 24.0)), "next", "›", Color32::TRANSPARENT, DIM, sans(16.0)) { load_preset(cx, st, (st.preset + 1) % presets.len()); }
     x += 24.0;
     // tabs
-    let tabs = [("stems", Tab::Stems), ("knobs", Tab::Knobs), ("play", Tab::Play)];
+    let tabs = [("stems", Tab::Stems), ("knobs", Tab::Knobs)];
     let widths: Vec<f32> = tabs.iter().map(|t| cx.text_w(t.0, sans(12.0)) + 20.0).collect();
     let tw: f32 = widths.iter().sum::<f32>() + 2.0 * (tabs.len() as f32 + 1.0);
     pt.rect_filled(Rect::from_min_size(pos2(x, 8.0), vec2(tw, 24.0)), CornerRadius::same(4), Color32::from_rgb(0x1c, 0x1c, 0x1e));
@@ -223,10 +242,27 @@ fn header(cx: &mut Cx, st: &mut Ui) {
         tx += widths[i] + 2.0;
     }
     x += tw + 10.0;
-    let cw = cx.text_w("combined", sans(12.0)) + 20.0;
-    let on = st.combined && st.tab == Tab::Stems;
-    if cx.button(Rect::from_min_size(pos2(x, 8.0), vec2(cw, 24.0)), "combined", "combined", if on { Color32::from_rgb(0x3a, 0x3a, 0x3e) } else { Color32::from_rgb(0x1f, 0x1f, 0x21) }, if on { BRIGHT } else { DIM }, sans(12.0)) {
-        if st.tab == Tab::Stems { st.combined = !st.combined; } else { st.tab = Tab::Stems; st.combined = true; }
+    // view toggles: spectrogram, waveform
+    for k in 0..2 {
+        let r = Rect::from_min_size(pos2(x, 8.0), vec2(28.0, 24.0));
+        let resp = cx.ui.interact(r, egui::Id::new(("view", k)), Sense::click());
+        let on = if k == 0 { st.show_spec } else { st.show_wave };
+        if resp.clicked() { if k == 0 { st.show_spec = !on } else { st.show_wave = !on } }
+        let fill = if on { Color32::from_rgb(0x2e, 0x2e, 0x31) } else if resp.hovered() { Color32::from_rgb(0x24, 0x24, 0x27) } else { Color32::from_rgb(0x1c, 0x1c, 0x1e) };
+        pt.rect_filled(r, CornerRadius::same(4), fill);
+        let ic = if on { TEXT } else { Color32::from_rgb(0x55, 0x55, 0x5a) };
+        let c = r.center();
+        if k == 0 {
+            // spectrogram: bars of falling height
+            for (j, hh) in [10.0f32, 7.0, 8.5, 5.0, 3.5].iter().enumerate() {
+                let bx = c.x - 8.0 + j as f32 * 4.0;
+                pt.rect_filled(Rect::from_min_max(pos2(bx, c.y + 5.0 - hh), pos2(bx + 2.5, c.y + 5.0)), CornerRadius::ZERO, ic);
+            }
+        } else {
+            let pts: Vec<Pos2> = (0..=24).map(|j| { let t = j as f32 / 24.0; pos2(c.x - 9.0 + 18.0 * t, c.y - 5.0 * (t * std::f32::consts::TAU * 1.5).sin() * (1.0 - 0.6 * t)) }).collect();
+            pt.add(Shape::line(pts, Stroke::new(1.5, ic)));
+        }
+        x += 30.0;
     }
     // right side: dice, note, audition
     let mut rx = W - 20.0;
@@ -281,11 +317,11 @@ fn stems(cx: &mut Cx, st: &mut Ui) {
         cx.text(pos2(W / 2.0, 280.0), egui::Align2::CENTER_CENTER, "rendering", sans(12.0), DIMMER);
         return;
     };
-    let lanes: Vec<usize> = if st.combined { vec![0] } else { (0..view.lanes.len()).collect() };
+    let lanes: Vec<usize> = (0..view.lanes.len()).collect();
     let avail = STRIP_TOP - LANES_TOP - 12.0;
     let gap = 6.0;
     let want: f32 = lanes.iter().map(|&i| if i == 0 { 92.0 } else { 78.0 }).sum::<f32>() + gap * (lanes.len() as f32 - 1.0);
-    let k = if st.combined { avail / 92.0 } else { (avail / want).min(1.0) };
+    let k = (avail / want).min(1.0);
     let mut y = LANES_TOP;
     for &li in &lanes {
         let h = (if li == 0 { 92.0 } else { 78.0 }) * k;
@@ -298,24 +334,36 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     let pt = cx.painter();
     let ln = &view.lanes[li];
     let col = rgb(ln.color);
-    // grip: drag the lane out as a file (option-drag on the mix takes every stem)
-    let gr = Rect::from_min_size(pos2(14.0, y), vec2(24.0, h));
-    let gresp = cx.ui.interact(gr, egui::Id::new(("grip", li)), Sense::drag());
-    let gc = if gresp.hovered() || gresp.dragged() { BRIGHT } else { Color32::from_rgb(0x55, 0x55, 0x5a) };
-    for (dx, dy) in [(0.0, -5.0), (4.0, -5.0), (0.0, 0.0), (4.0, 0.0), (0.0, 5.0), (4.0, 5.0)] { pt.circle_filled(pos2(24.0 + dx, y + h / 2.0 + dy), 1.2, gc); }
-    if gresp.hovered() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::Grab); }
-    if gresp.drag_started() {
-        let all = li == 0 && cx.ui.input(|i| i.modifiers.alt);
-        let pick: Vec<usize> = if all { (1..view.lanes.len()).collect() } else { vec![li] };
-        drag_out(st, view, &pick);
+    // mute and solo: what plays, leaving the patch alone
+    if let Some(bit) = crate::worker::lane_bit(ln.name) {
+        for (k, (tag, flags)) in [("M", &cx.sh.mute), ("S", &cx.sh.solo)].into_iter().enumerate() {
+            let on = flags.load(Ordering::Relaxed) & (1 << bit) != 0;
+            let r = Rect::from_center_size(pos2(25.0, y + h / 2.0 + if k == 0 { -9.0 } else { 9.0 }), vec2(16.0, 15.0));
+            let resp = cx.ui.interact(r, egui::Id::new(("ms", li, k)), Sense::click());
+            let (fill, fg) = match (on, k) { (true, 0) => (Color32::from_rgb(0x8a, 0x8a, 0x8e), BG), (true, _) => (col, BG), _ => (if resp.hovered() { Color32::from_rgb(0x38, 0x38, 0x3c) } else { TRACK }, DIM) };
+            pt.rect_filled(r, CornerRadius::same(3), fill);
+            pt.text(r.center(), egui::Align2::CENTER_CENTER, tag, semi(9.0), fg);
+            if resp.clicked() { flags.fetch_xor(1 << bit, Ordering::Relaxed); }
+        }
     }
     // label
     let lr = Rect::from_min_size(pos2(40.0, y), vec2(78.0, h));
     if cx.ui.interact(lr, egui::Id::new(("lane", li)), Sense::click()).clicked() { st.sel = li; }
     if st.sel == li { pt.rect_filled(Rect::from_min_size(pos2(40.0, y + h / 2.0 - 15.0), vec2(2.0, 30.0)), CornerRadius::ZERO, col); }
     cx.text(pos2(50.0, y + h / 2.0 - 7.0), egui::Align2::LEFT_CENTER, ln.name, semi(12.0), col);
-    let lvl = if li == 0 { format!("{:.1} pk", view.peak_db) } else { format!("{:.1}", ln.level_db) }.replace('-', "−");
-    cx.text(pos2(50.0, y + h / 2.0 + 9.0), egui::Align2::LEFT_CENTER, &lvl, mono(10.0), DIMMER);
+    // a stem's level reads live from its knob and drags up and down; double-click resets it
+    let lvl_id = crate::worker::LAYERS.iter().find(|l| l.0 == ln.name).map(|l| l.1).or((ln.name == "reverb").then_some(REV_LVL));
+    let lvl = match lvl_id { Some(i) => format!("{:.1}", cx.gun(i)), None => format!("{:.1} pk", view.peak_db) }.replace('-', "−");
+    let mut lc = DIMMER;
+    if let Some(i) = lvl_id {
+        let vr = Rect::from_min_size(pos2(46.0, y + h / 2.0 + 1.0), vec2(48.0, 16.0));
+        let resp = cx.ui.interact(vr, egui::Id::new(("lane-lvl", li)), Sense::click_and_drag());
+        let fp = &cx.p.gun.p[i];
+        vertical_drag(cx, &resp, fp);
+        if resp.double_clicked() { cx.setter.begin_set_parameter(fp); cx.setter.set_parameter_normalized(fp, fp.default_normalized_value()); cx.setter.end_set_parameter(fp); }
+        if resp.hovered() || resp.dragged() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical); lc = TEXT; }
+    }
+    cx.text(pos2(50.0, y + h / 2.0 + 9.0), egui::Align2::LEFT_CENTER, &lvl, mono(10.0), lc);
     if let Some(slot) = crate::worker::sample_slot(ln.name) {
         let xr = Rect::from_center_size(pos2(108.0, y + h / 2.0 + 9.0), vec2(16.0, 16.0));
         let resp = cx.ui.interact(xr, egui::Id::new(("unload", li)), Sense::click());
@@ -335,7 +383,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         if resp.clicked() { if on { st.locked.retain(|&x| x != g); } else { st.locked.push(g); } }
         lock_icon(&pt, lr.center(), on, if on { col } else if resp.hovered() { BRIGHT } else { Color32::from_rgb(0x55, 0x55, 0x5a) });
     }
-    // spectrogram; dragging it takes the lane out as a file, like the grip
+    // spectrogram; dragging it takes the lane out as a file (option-drag on the mix takes every stem)
     let r = Rect::from_min_size(pos2(LANE_X, y), vec2(W - 20.0 - LANE_X, h));
     let sresp = cx.ui.interact(r, egui::Id::new(("lane-drag", li)), Sense::drag());
     if sresp.hovered() && !cx.ui.ctx().is_using_pointer() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::Grab); }
@@ -344,7 +392,8 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         let pick: Vec<usize> = if all { (1..view.lanes.len()).collect() } else { vec![li] };
         drag_out(st, view, &pick);
     }
-    if let Some(t) = st.tex.get(li) { pt.image(t.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE); }
+    if let Some(t) = st.tex.get(li).filter(|_| st.show_spec) { pt.image(t.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE); }
+    if !st.show_wave { overlays(cx, ln.name, r, col); return; }
     // waveform
     let n = ln.wave.len();
     let (cy, a) = (r.center().y, r.height() * 0.46);
@@ -501,10 +550,91 @@ fn knob(cx: &mut Cx, id: (usize, usize), fp: &FloatParam, center: Pos2, rad: f32
     let resp = cx.ui.interact(r, egui::Id::new(("knob", id)), Sense::click_and_drag());
     let u = fp.unmodulated_normalized_value();
     let w = rad * 0.2;
-    pt.add(Shape::line(arc_pts(center, rad, 0.0, 1.0), Stroke::new(w, TRACK)));
+    // hover lifts the track; a held knob sits on a disc of its own color
+    let held = resp.dragged() || resp.is_pointer_button_down_on();
+    if held { pt.circle_filled(center, rad + w * 1.5 + 3.0, alpha(col, 0.16)); }
+    let track = if held || resp.hovered() { Color32::from_rgb(0x44, 0x44, 0x48) } else { TRACK };
+    pt.add(Shape::line(arc_pts(center, rad, 0.0, 1.0), Stroke::new(w, track)));
     if let Some(s) = range { if s > 0.0 { pt.add(Shape::line(arc_pts(center, rad, u - s, u + s), Stroke::new(w * 2.3, alpha(col, 0.3)))); } }
     pt.add(Shape::line(arc_pts(center, rad, 0.0, u), Stroke::new(w, col)));
-    // the drag runs on an unstepped value, so stepped knobs move once the drag crosses a step
+    vertical_drag(cx, &resp, fp);
+    if resp.double_clicked() {
+        cx.setter.begin_set_parameter(fp);
+        cx.setter.set_parameter_normalized(fp, fp.default_normalized_value());
+        cx.setter.end_set_parameter(fp);
+    }
+    if resp.hovered() || resp.dragged() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical); }
+    resp
+}
+
+fn is_enum(s: &tearout_dsp::Spec) -> bool { s.unit.contains('/') }
+
+/// Gun knob `i`: a knob, or for a choice between named options a button that steps through them.
+/// Returns whether it drew a knob.
+fn control(cx: &mut Cx, id: (usize, usize), i: usize, center: Pos2, rad: f32, col: Color32, range: Option<f32>) -> bool {
+    let s = &SPEC[i];
+    if !is_enum(s) { knob(cx, id, &cx.p.gun.p[i], center, rad, col, range); return true; }
+    let opts: Vec<&str> = s.unit.split('/').collect();
+    let k = ((cx.gun(i).round() - s.min) as usize).min(opts.len() - 1);
+    let font = if rad > 12.0 { sans(11.0) } else { sans(9.0) };
+    let w = opts.iter().map(|o| cx.text_w(o, font.clone())).fold(0.0, f32::max) + 14.0;
+    let r = Rect::from_center_size(center, vec2(w.max(rad * 2.0 + 6.0), if rad > 12.0 { 22.0 } else { 18.0 }));
+    let resp = cx.ui.interact(r, egui::Id::new(("knob", id)), Sense::click());
+    let fill = if resp.hovered() { Color32::from_rgb(0x38, 0x38, 0x3c) } else { TRACK };
+    let pt = cx.painter();
+    pt.rect_filled(r, CornerRadius::same(4), fill);
+    pt.text(r.center(), egui::Align2::CENTER_CENTER, opts[k], font, if k > 0 { col } else { TEXT });
+    if resp.clicked() { cx.set_val(i, s.min + ((k + 1) % opts.len()) as f64); }
+    if resp.secondary_clicked() { cx.set_val(i, s.min + ((k + opts.len() - 1) % opts.len()) as f64); }
+    false
+}
+
+/// A knob's value as typed into its field.
+fn edit_text(s: &tearout_dsp::Spec, v: f64) -> String {
+    if s.scale == tearout_dsp::Scale::Int { return format!("{}", v.round()); }
+    let t = format!("{:.2}", v);
+    t.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// A typed value in the knob's units: the first number in the text (a "k" after it means thousands).
+fn parse_value(s: &tearout_dsp::Spec, text: &str) -> Option<f64> {
+    let t = text.replace('−', "-").replace(',', ".").to_lowercase();
+    let start = t.find(|c: char| c.is_ascii_digit() || c == '-' || c == '.')?;
+    let rest = &t[start..];
+    let end = rest.char_indices().skip(1).find(|&(_, c)| !(c.is_ascii_digit() || c == '.')).map_or(rest.len(), |(j, _)| j);
+    let mut v: f64 = rest[..end].parse().ok()?;
+    if rest[end..].trim_start().starts_with('k') { v *= 1000.0; }
+    Some(v.clamp(s.min, s.max))
+}
+
+/// The value under a knob: double-click to type a new one (enter sets it, escape leaves it).
+fn value_field(cx: &mut Cx, st: &mut Ui, i: usize, at: Pos2, font: FontId, col: Color32) {
+    let s = &SPEC[i];
+    let shown = fmt_value(s, cx.gun(i));
+    let w = cx.text_w(&shown, font.clone()).max(36.0) + 8.0;
+    let r = Rect::from_center_size(at, vec2(w, font.size + 6.0));
+    if let Some((ei, buf)) = st.editing.as_mut() {
+        if *ei == i {
+            cx.ui.painter().rect_filled(r, CornerRadius::same(3), TRACK);
+            let resp = cx.ui.put(r, egui::TextEdit::singleline(buf).font(font).horizontal_align(egui::Align::Center).frame(false).text_color(BRIGHT).desired_width(w));
+            if !resp.has_focus() && !resp.lost_focus() { resp.request_focus(); }
+            if resp.lost_focus() {
+                let cancel = cx.ui.input(|inp| inp.key_pressed(egui::Key::Escape));
+                if !cancel { if let Some(v) = parse_value(s, buf) { cx.set_val(i, v); } }
+                st.editing = None;
+            }
+            return;
+        }
+    }
+    let resp = cx.ui.interact(r, egui::Id::new(("value", i)), Sense::click());
+    cx.text(at, egui::Align2::CENTER_CENTER, &shown, font, if resp.hovered() { BRIGHT } else { col });
+    if resp.double_clicked() { st.editing = Some((i, edit_text(s, cx.gun(i)))); }
+}
+
+/// Vertical drag on `fp` with the cursor pinned; shift is fine. The drag runs on an unstepped value, so stepped
+/// knobs move once the drag crosses a step.
+fn vertical_drag(cx: &mut Cx, resp: &egui::Response, fp: &FloatParam) {
+    let u = fp.unmodulated_normalized_value();
     let raw_id = resp.id.with("raw");
     if resp.drag_started() {
         cx.setter.begin_set_parameter(fp);
@@ -521,13 +651,6 @@ fn knob(cx: &mut Cx, id: (usize, usize), fp: &FloatParam, center: Pos2, rad: f32
         if (raw - u).abs() > 1e-7 { cx.setter.set_parameter_normalized(fp, raw); }
     }
     if resp.drag_stopped() { cx.setter.end_set_parameter(fp); crate::grab::end(); }
-    if resp.double_clicked() {
-        cx.setter.begin_set_parameter(fp);
-        cx.setter.set_parameter_normalized(fp, fp.default_normalized_value());
-        cx.setter.end_set_parameter(fp);
-    }
-    if resp.hovered() || resp.dragged() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical); }
-    resp
 }
 
 const CORE: [(usize, &str, Color32); 12] = [
@@ -546,9 +669,7 @@ fn core_strip(cx: &mut Cx, st: &mut Ui) {
         for j in 0..10 {
             let i = S1_LVL + 10 * (slot - 1) + j;
             let c = pos2(x0 + step * (j as f32 + 0.5), STRIP_TOP + 30.0);
-            knob(cx, (2, i), &cx.p.gun.p[i], c, 15.0, col, None);
-            let v = fmt_value(&SPEC[i], cx.gun(i));
-            cx.text(pos2(c.x, c.y + 28.0), egui::Align2::CENTER_CENTER, &v, mono(10.0), TEXT);
+            if control(cx, (2, i), i, c, 15.0, col, None) { value_field(cx, st, i, pos2(c.x, c.y + 28.0), mono(10.0), TEXT); }
             cx.text(pos2(c.x, c.y + 42.0), egui::Align2::CENTER_CENTER, SPEC[i].label, sans(10.0), Color32::from_rgb(0x7a, 0x7a, 0x7c));
         }
         return;
@@ -559,10 +680,7 @@ fn core_strip(cx: &mut Cx, st: &mut Ui) {
     for (k, &(i, name, col)) in CORE.iter().enumerate() {
         let c = pos2(x0 + step * (k as f32 + 0.5), STRIP_TOP + 30.0);
         let range = DICE.iter().find(|d| d.0 == i).map(|d| d.1 as f32 * amt * 2.0).filter(|_| dice);
-        let fp = &cx.p.gun.p[i];
-        knob(cx, (0, k), fp, c, 15.0, col, range);
-        let v = fmt_value(&SPEC[i], cx.gun(i));
-        cx.text(pos2(c.x, c.y + 28.0), egui::Align2::CENTER_CENTER, &v, mono(10.0), TEXT);
+        if control(cx, (0, k), i, c, 15.0, col, range) { value_field(cx, st, i, pos2(c.x, c.y + 28.0), mono(10.0), TEXT); }
         cx.text(pos2(c.x, c.y + 42.0), egui::Align2::CENTER_CENTER, name, sans(10.0), Color32::from_rgb(0x7a, 0x7a, 0x7c));
     }
 }
@@ -605,9 +723,15 @@ fn knobs_tab(cx: &mut Cx, st: &mut Ui) {
             for (k, &i) in ids.iter().enumerate() {
                 let (c, r) = (k % ncol, k / ncol);
                 let center = pos2(x + kw * (c as f32 + 0.5), y + r as f32 * kh + 14.0);
-                let fp = &cx.p.gun.p[i];
-                let resp = knob(cx, (1, i), fp, center, 10.5, kc, None);
-                let label = if resp.hovered() || resp.dragged() { fmt_value(&SPEC[i], cx.gun(i)) } else { SPEC[i].label.to_string() };
+                let is_knob = control(cx, (1, i), i, center, 10.5, kc, None);
+                let resp_on = is_knob && cx.ui.ctx().read_response(egui::Id::new(("knob", (1usize, i)))).is_some_and(|r| r.hovered() || r.dragged());
+                let lr = Rect::from_center_size(pos2(center.x, center.y + 25.0), vec2(kw, 20.0));
+                if st.editing.as_ref().is_some_and(|e| e.0 == i) || (is_knob && cx.ui.interact(lr, egui::Id::new(("klabel", i)), Sense::click()).double_clicked()) {
+                    if st.editing.as_ref().map_or(true, |e| e.0 != i) { st.editing = Some((i, edit_text(&SPEC[i], cx.gun(i)))); }
+                    value_field(cx, st, i, pos2(center.x, center.y + 20.0), sans(8.5), TEXT);
+                    continue;
+                }
+                let label = if resp_on { fmt_value(&SPEC[i], cx.gun(i)) } else { SPEC[i].label.to_string() };
                 let mut lines: Vec<String> = Vec::new();
                 for w in label.split(' ') {
                     match lines.last_mut() {
@@ -620,13 +744,31 @@ fn knobs_tab(cx: &mut Cx, st: &mut Ui) {
                 }
             }
             let mut count = ids.len();
-            if g == "burst" {
+            if g == "burst" || g == "master" {
                 let (c, r) = (count % ncol, count / ncol);
                 let center = pos2(x + kw * (c as f32 + 0.5), y + r as f32 * kh + 14.0);
-                let fp = &cx.p.shots_grid;
-                let resp = knob(cx, (3, 0), fp, center, 10.5, kc, None);
-                let label = if resp.hovered() || resp.dragged() || fp.value() > 0.5 { fp.to_string() } else { "grid".to_string() };
-                cx.text(pos2(center.x, center.y + 20.0), egui::Align2::CENTER_CENTER, &label, sans(8.5), Color32::from_rgb(0x7a, 0x7a, 0x7c));
+                let (text, on, label) = if g == "burst" {
+                    let fp = &cx.p.shots_grid;
+                    (fp.to_string(), fp.value() > 0.5, "grid")
+                } else {
+                    (if cx.p.limit.value() { "on" } else { "off" }.to_string(), cx.p.limit.value(), "limiter")
+                };
+                let w = cx.text_w(&text, sans(9.0)).max(22.0) + 12.0;
+                let br = Rect::from_center_size(center, vec2(w.min(kw - 2.0).max(30.0), 18.0));
+                let resp = cx.ui.interact(br, egui::Id::new(("extra", g)), Sense::click());
+                cx.ui.painter().rect_filled(br, CornerRadius::same(4), if resp.hovered() { Color32::from_rgb(0x38, 0x38, 0x3c) } else { TRACK });
+                cx.text(br.center(), egui::Align2::CENTER_CENTER, &text, sans(9.0), if on { kc } else { TEXT });
+                cx.text(pos2(center.x, center.y + 20.0), egui::Align2::CENTER_CENTER, label, sans(8.5), Color32::from_rgb(0x7a, 0x7a, 0x7c));
+                if g == "burst" {
+                    let fp = &cx.p.shots_grid;
+                    let n = crate::params::GRID.len() as f32;
+                    let v = fp.value().round();
+                    let next = if resp.clicked() { Some((v + 1.0) % n) } else if resp.secondary_clicked() { Some((v + n - 1.0) % n) } else { None };
+                    if let Some(nv) = next { cx.setter.begin_set_parameter(fp); cx.setter.set_parameter(fp, nv); cx.setter.end_set_parameter(fp); }
+                } else if resp.clicked() {
+                    let fp = &cx.p.limit;
+                    cx.setter.begin_set_parameter(fp); cx.setter.set_parameter(fp, !fp.value()); cx.setter.end_set_parameter(fp);
+                }
                 count += 1;
             }
             y += ((count + ncol - 1) / ncol) as f32 * kh + 10.0;
@@ -645,24 +787,6 @@ fn power_icon(cx: &Cx, c: Pos2, col: Color32) {
 
 // ───────────────────────── play
 
-fn play_tab(cx: &mut Cx) {
-    let items: [(&FloatParam, &str, &str); 4] = [(&cx.p.duck, "duck", "new note"), (&cx.p.duck_rel, "release", "new note"), (&cx.p.vel, "velocity", "keys"), (&cx.p.dice_amt, "dice", "dice")];
-    let mut last = "";
-    let mut x = 40.0;
-    for (k, (fp, name, sec)) in items.iter().enumerate() {
-        if *sec != last {
-            if !last.is_empty() { x += 40.0; }
-            cx.text(pos2(x - 20.0, 70.0), egui::Align2::LEFT_CENTER, sec, semi(12.0), TEXT);
-            last = sec;
-        }
-        let c = pos2(x + 10.0, 120.0);
-        knob(cx, (2, k), fp, c, 18.0, BRIGHT, None);
-        cx.text(pos2(c.x, c.y + 32.0), egui::Align2::CENTER_CENTER, &fp.to_string(), mono(10.0), TEXT);
-        cx.text(pos2(c.x, c.y + 46.0), egui::Align2::CENTER_CENTER, name, sans(10.0), Color32::from_rgb(0x7a, 0x7a, 0x7c));
-        x += 70.0;
-    }
-    let _ = group_name;
-}
 
 fn drag_out(st: &Ui, view: &View, lanes: &[usize]) {
     let preset = crate::presets::all().get(st.preset).map(|p| p.name.clone()).unwrap_or_default();

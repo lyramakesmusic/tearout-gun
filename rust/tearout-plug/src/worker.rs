@@ -56,10 +56,31 @@ pub struct Shared {
     pub loaded: Mutex<[bool; 3]>,
     /// host tempo in BPM, as f64 bits
     pub tempo: AtomicU64,
+    /// lanes muted and soloed for listening, one bit per [`lane_bit`]
+    pub mute: std::sync::atomic::AtomicU32,
+    pub solo: std::sync::atomic::AtomicU32,
 }
 
-/// The patch to render: the knobs, with the burst interval set from the host tempo when shots follow the grid.
+/// Mute/solo bit of a stem lane: the layers in [`LAYERS`] order, then reverb.
+pub fn lane_bit(name: &str) -> Option<u32> {
+    LAYERS.iter().position(|l| l.0 == name).map(|k| k as u32).or((name == "reverb").then_some(LAYERS.len() as u32))
+}
+
+fn lane_level(bit: u32) -> usize { LAYERS.get(bit as usize).map_or(REV_LVL, |l| l.1) }
+
+/// The patch to render: the knobs, with the burst interval set from the host tempo when shots follow the grid,
+/// and muted (or unsoloed) lanes silent.
 pub fn patch(params: &PlugParams, sh: &Shared) -> Params {
+    let mut p = full_patch(params, sh);
+    let (mute, solo) = (sh.mute.load(Ordering::Relaxed), sh.solo.load(Ordering::Relaxed));
+    for bit in 0..=LAYERS.len() as u32 {
+        if mute & (1 << bit) != 0 || (solo != 0 && solo & (1 << bit) == 0) { p.0[lane_level(bit)] = -60.0; }
+    }
+    p
+}
+
+/// The patch with every lane sounding.
+pub fn full_patch(params: &PlugParams, sh: &Shared) -> Params {
     let mut p = params.gun.snapshot();
     let beats = crate::params::GRID[(params.shots_grid.value().round() as usize).min(crate::params::GRID.len() - 1)].0;
     grid_interval(&mut p, beats, f64::from_bits(sh.tempo.load(Ordering::Relaxed)));
@@ -80,7 +101,7 @@ pub fn grid_interval(p: &mut Params, beats: f64, bpm: f64) {
 
 impl Default for Shared {
     fn default() -> Self {
-        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36), loaded: Mutex::new([false; 3]), tempo: AtomicU64::new(150f64.to_bits()) }
+        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36), loaded: Mutex::new([false; 3]), tempo: AtomicU64::new(150f64.to_bits()), mute: Default::default(), solo: Default::default() }
     }
 }
 
@@ -178,7 +199,7 @@ pub fn roll(p: &Params, amt: f64, r: &mut tearout_dsp::dsp::Rng) -> Params {
 pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
     let mut main = Engine::new();
     let mut other = Engine::new();
-    let mut stem_eng: Vec<Engine> = (0..LAYERS.len() + 1).map(|_| Engine::new()).collect();
+    let mut stem_eng: Vec<Engine> = (0..LAYERS.len() + 2).map(|_| Engine::new()).collect();
     let mut last = 0u64;
     let mut last_view = 0u64;
     let mut rng = tearout_dsp::dsp::Rng::new(1234.0);
@@ -221,6 +242,13 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
             b.base = Some(base);
             b.dice = None;
             drop(b);
+            // the note being played renders next, so it keeps sounding exact while knobs move
+            let hot = note_slot(sh.last_note.load(Ordering::Relaxed));
+            if hot != home {
+                let s = render_note(&mut other, &p, hot);
+                have[hot] = true;
+                sh.bank.lock().unwrap().notes[hot] = Some(s);
+            }
             sh.dice_used.store(true, Ordering::Relaxed);
             pending_view = Some(p.clone());
         }
@@ -254,7 +282,8 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
             last_view = kv;
             let b = sh.bank.lock().unwrap().base.clone();
             let Some(mix) = b else { continue };
-            let v = build_view(&vp, &mix, &mut stem_eng, sh.view_version.load(Ordering::Relaxed) + 1);
+            let full = full_patch(&params, &sh);
+            let v = build_view(&full, &mix, &mut stem_eng, sh.view_version.load(Ordering::Relaxed) + 1);
             *sh.view.lock().unwrap() = Some(Arc::new(v));
             sh.view_version.fetch_add(1, Ordering::Release);
             continue;
@@ -269,6 +298,7 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
     }
 }
 
+/// Lanes for the view: `mix` as heard, and every layer of the full patch `p` on its own.
 fn build_view(p: &Params, mix: &Sound, eng: &mut [Engine], version: u64) -> View {
     let sr = tearout_dsp::SR;
     let t1 = (VIEW_MS * sr / 1000.0) as usize;
@@ -286,10 +316,12 @@ fn build_view(p: &Params, mix: &Sound, eng: &mut [Engine], version: u64) -> View
     if p.0[REV_LVL] > -59.0 {
         let mut q = p.clone();
         q.0[REV_LVL] = -60.0;
-        let o = last[0].render(&q);
-        let n = mix.l.len().min(o.l.len());
-        let l: Vec<f32> = (0..n).map(|i| mix.l[i] - o.l[i]).collect();
-        let r: Vec<f32> = (0..n).map(|i| mix.r[i] - o.r[i]).collect();
+        let (dry_eng, wet_eng) = last.split_at_mut(1);
+        let o = dry_eng[0].render(&q);
+        let wet = wet_eng[0].render(p);
+        let n = wet.l.len().min(o.l.len());
+        let l: Vec<f32> = (0..n).map(|i| wet.l[i] - o.l[i]).collect();
+        let r: Vec<f32> = (0..n).map(|i| wet.r[i] - o.r[i]).collect();
         stems.push(("reverb", REV_COLOR, p.0[REV_LVL], l, r));
     }
     let mut all = vec![("mix", MIX_COLOR, 0.0, mix.l.clone(), mix.r.clone())];
