@@ -28,6 +28,9 @@ symphonia = { version = "0.5", default-features = false, features = ["wav", "aif
 objc = "0.2"
 cocoa = "0.24"
 
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+rfd = "0.15"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_System_Ole", "Win32_System_Com", "Win32_System_SystemServices", "Win32_Graphics_Gdi", "Win32_UI_Input_KeyboardAndMouse"] }
 

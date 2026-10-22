@@ -1,10 +1,46 @@
-// Renders written as 24-bit stereo WAV files under ~/Music/Tearout Farm, named by preset, layer and patch.
+// The Tearout Farm folder (saved presets, dragged-out stems) and the stems written into it as 24-bit stereo
+// WAV files, named by preset, layer, note and patch.
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::RwLock;
 
-pub fn dir() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    home.join("Music").join("Tearout Farm")
+/// The app-data home: Application Support on macOS, %APPDATA% on Windows, the XDG data folder elsewhere.
+fn app_data() -> PathBuf {
+    let env = |k: &str| std::env::var_os(k).map(PathBuf::from);
+    let home = env("HOME").unwrap_or_else(std::env::temp_dir);
+    if cfg!(target_os = "macos") { home.join("Library").join("Application Support").join("Tearout Farm") }
+    else if cfg!(windows) { env("APPDATA").unwrap_or_else(std::env::temp_dir).join("Tearout Farm") }
+    else { env("XDG_DATA_HOME").unwrap_or_else(|| home.join(".local").join("share")).join("tearout-farm") }
+}
+
+fn settings_file() -> PathBuf { app_data().join("settings.json") }
+
+static ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+/// The Tearout Farm folder: the one chosen in the preset menu, else the app-data home.
+pub fn root() -> PathBuf {
+    if let Some(p) = ROOT.read().ok().and_then(|r| r.clone()) { return p; }
+    let chosen = std::fs::read_to_string(settings_file()).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).and_then(|j| j["folder"].as_str().map(PathBuf::from));
+    let p = chosen.unwrap_or_else(app_data);
+    if let Ok(mut r) = ROOT.write() { *r = Some(p.clone()); }
+    p
+}
+
+/// Make `p` the Tearout Farm folder, remembered across sessions.
+pub fn set_root(p: PathBuf) {
+    let _ = std::fs::create_dir_all(app_data());
+    let _ = std::fs::write(settings_file(), serde_json::json!({ "folder": p.to_string_lossy() }).to_string());
+    if let Ok(mut r) = ROOT.write() { *r = Some(p); }
+}
+
+/// Dragged-out stems.
+pub fn dir() -> PathBuf { root().join("Stems") }
+
+/// Show a folder in the file manager.
+pub fn reveal(p: &std::path::Path) {
+    let _ = std::fs::create_dir_all(p);
+    let opener = if cfg!(target_os = "macos") { "open" } else if cfg!(windows) { "explorer" } else { "xdg-open" };
+    let _ = std::process::Command::new(opener).arg(p).spawn();
 }
 
 fn clean(s: &str) -> String {

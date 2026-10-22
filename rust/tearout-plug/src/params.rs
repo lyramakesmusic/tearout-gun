@@ -112,6 +112,9 @@ pub struct PlugParams {
     pub dice: BoolParam,
     #[id = "dice_amt"]
     pub dice_amt: FloatParam,
+    /// Output gain, ahead of the limiter.
+    #[id = "out"]
+    pub out: FloatParam,
     /// Output peak limiter, holding the plugin's output under -0.3 dBFS.
     #[id = "limit"]
     pub limit: BoolParam,
@@ -134,6 +137,7 @@ impl Default for PlugParams {
             duck_rel: FloatParam::new("duck release", 120.0, FloatRange::Skewed { min: 5.0, max: 2000.0, factor: 0.3 }).with_unit(" ms").with_value_to_string(Arc::new(|v| format!("{:.0}", v))),
             vel: FloatParam::new("velocity", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),
             dice: BoolParam::new("dice", false),
+            out: FloatParam::new("output", 0.0, FloatRange::Linear { min: -24.0, max: 6.0 }).with_unit(" dB").with_value_to_string(Arc::new(|v| format!("{:+.1}", v).replace('-', "−"))),
             limit: BoolParam::new("limiter", true),
             shots_grid: FloatParam::new("shots grid", 0.0, FloatRange::Linear { min: 0.0, max: (GRID.len() - 1) as f32 }).with_step_size(1.0).with_value_to_string(Arc::new(|v| GRID[(v.round() as usize).min(GRID.len() - 1)].1.to_string())),
             dice_amt: FloatParam::new("dice amount", 0.35, FloatRange::Linear { min: 0.0, max: 1.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),

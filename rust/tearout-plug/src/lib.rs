@@ -217,6 +217,8 @@ impl Plugin for Tearout {
         }
         let (l, r) = out.split_at_mut(1);
         self.mix(&events, &mut l[0][..n], &mut r[0][..n]);
+        let g = 10f32.powf(self.params.out.value() / 20.0);
+        if g != 1.0 { for x in l[0][..n].iter_mut().chain(r[0][..n].iter_mut()) { *x *= g; } }
         let on = self.params.limit.value();
         self.limiter.process(&mut l[0][..n], &mut r[0][..n], on);
         self.events = events;
