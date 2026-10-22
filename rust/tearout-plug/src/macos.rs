@@ -129,3 +129,31 @@ pub fn watch_pinch() {
 
 /// Pinch since the last call (positive spreads the fingers).
 pub fn take_pinch() -> f32 { f32::from_bits(PINCH.swap(0, std::sync::atomic::Ordering::Relaxed)) }
+
+/// The content view of the window under the pointer (the editor's, while it is being clicked), as a parent
+/// for dialogs that should open as a sheet on it.
+pub struct Parent(std::ptr::NonNull<std::ffi::c_void>);
+
+pub fn window_under_pointer() -> Option<Parent> {
+    unsafe {
+        let mouse: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+        let num: isize = msg_send![class!(NSWindow), windowNumberAtPoint: mouse belowWindowWithWindowNumber: 0isize];
+        let app: id = msg_send![class!(NSApplication), sharedApplication];
+        let win: id = msg_send![app, windowWithWindowNumber: num];
+        if win == nil { return None; }
+        let content: id = msg_send![win, contentView];
+        std::ptr::NonNull::new(content as *mut std::ffi::c_void).map(Parent)
+    }
+}
+
+impl raw_window_handle_06::HasWindowHandle for Parent {
+    fn window_handle(&self) -> Result<raw_window_handle_06::WindowHandle<'_>, raw_window_handle_06::HandleError> {
+        let h = raw_window_handle_06::AppKitWindowHandle::new(self.0);
+        Ok(unsafe { raw_window_handle_06::WindowHandle::borrow_raw(h.into()) })
+    }
+}
+impl raw_window_handle_06::HasDisplayHandle for Parent {
+    fn display_handle(&self) -> Result<raw_window_handle_06::DisplayHandle<'_>, raw_window_handle_06::HandleError> {
+        Ok(raw_window_handle_06::DisplayHandle::appkit())
+    }
+}

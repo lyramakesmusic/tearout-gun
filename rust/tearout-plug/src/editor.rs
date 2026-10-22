@@ -443,7 +443,14 @@ fn load_preset(cx: &Cx, st: &mut Ui, i: usize) {
 
 /// Ask for a new Tearout Farm folder.
 fn pick_folder() {
-    #[cfg(any(target_os = "macos", windows))]
+    // on macOS the picker opens as a sheet on the editor's window, which keeps the editor in view
+    #[cfg(target_os = "macos")]
+    {
+        let mut d = rfd::FileDialog::new().set_title("Tearout Farm folder").set_directory(crate::export::root());
+        if let Some(w) = crate::macos::window_under_pointer() { d = d.set_parent(&w); }
+        if let Some(p) = d.pick_folder() { crate::export::set_root(p); }
+    }
+    #[cfg(windows)]
     if let Some(p) = rfd::FileDialog::new().set_title("Tearout Farm folder").set_directory(crate::export::root()).pick_folder() { crate::export::set_root(p); }
     #[cfg(not(any(target_os = "macos", windows)))]
     crate::export::reveal(&crate::export::root());
@@ -1082,6 +1089,9 @@ fn time_window(cx: &mut Cx, st: &mut Ui, view: &View) {
 
 /// This frame's mouse wheel and trackpad scrolling, in points (x, y).
 fn wheel(cx: &Cx) -> (f32, f32) {
+    // scrolling belongs to whatever floats under the pointer (the preset menu) before the page beneath it
+    let ctx = cx.ui.ctx();
+    if ctx.input(|i| i.pointer.hover_pos()).and_then(|p| ctx.layer_id_at(p)).is_some_and(|l| l.order != egui::Order::Background) { return (0.0, 0.0); }
     cx.ui.input(|i| i.events.iter().fold((0.0, 0.0), |acc, e| match e {
         egui::Event::MouseWheel { unit, delta, .. } => {
             let k = match unit { egui::MouseWheelUnit::Point => 1.0, egui::MouseWheelUnit::Line => 24.0, egui::MouseWheelUnit::Page => 300.0 };
