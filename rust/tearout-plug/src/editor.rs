@@ -628,7 +628,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
                 pt.rect_filled(Rect::from_min_max(pos2(x, cy - hi * a), pos2(x + colw, (cy - lo * a).max(cy - hi * a + 0.5))), CornerRadius::ZERO, alpha(col, 0.14));
             }
         }
-        if st.show_handles { overlays(cx, ln.name, r, col, sounding(ln)); }
+        if st.show_handles { lane_overlays(cx, ln.name, r, col, sounding(ln)); }
         return;
     }
     // waveform
@@ -653,7 +653,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     let edge = Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 14));
     pt.add(Shape::line(top, edge));
     pt.add(Shape::line(bot, edge));
-    if st.show_handles { overlays(cx, ln.name, r, col, sounding(ln)); }
+    if st.show_handles { lane_overlays(cx, ln.name, r, col, sounding(ln)); }
 }
 
 /// The knob group a stem lane's lock holds.
@@ -804,6 +804,14 @@ fn curve(cx: &Cx, r: Rect, col: Color32, f: impl Fn(f64) -> f64) {
 
 fn dashed(cx: &Cx, a: Pos2, b: Pos2, col: Color32) {
     cx.painter().extend(Shape::dashed_line(&[a, b], Stroke::new(1.0, col), 3.0, 4.0));
+}
+
+/// A lane's handles and curves, kept inside the lane: anything outside the time in view stays hidden.
+fn lane_overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32, spans_ms: Option<(f64, f64)>) {
+    let clip = cx.ui.clip_rect();
+    cx.ui.set_clip_rect(r.expand2(vec2(7.0, 6.0)).intersect(clip));
+    overlays(cx, name, r, col, spans_ms);
+    cx.ui.set_clip_rect(clip);
 }
 
 fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32, spans_ms: Option<(f64, f64)>) {
