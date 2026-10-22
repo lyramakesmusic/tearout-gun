@@ -164,7 +164,7 @@ pub fn decode(path: &str) -> Result<(Vec<f32>, Vec<f32>, f64), String> {
     Ok((l, r, rate))
 }
 pub const MIX_COLOR: [u8; 3] = [230, 230, 230];
-pub const REV_COLOR: [u8; 3] = [154, 160, 166];
+pub const REV_COLOR: [u8; 3] = [226, 74, 84];
 
 /// MIDI note folded by octaves into the engine's note range.
 /// Number of distinct engine notes; the bank keeps one render per slot.
