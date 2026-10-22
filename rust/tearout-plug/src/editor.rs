@@ -238,7 +238,6 @@ fn resize_corner(cx: &mut Cx, scale: f32) {
 
 fn header(cx: &mut Cx, st: &mut Ui) {
     let pt = cx.painter();
-    let presets = crate::presets::all();
     let y = 20.0;
     // wordmark
     const TITLE: &[u8] = include_bytes!("../assets/title/title.rgba");
@@ -389,6 +388,35 @@ fn header(cx: &mut Cx, st: &mut Ui) {
     if resp.dragged() { cx.setter.set_parameter(&cx.p.dice_amt, (amt + resp.drag_delta().x / 200.0).clamp(0.0, 1.0)); }
     if resp.drag_stopped() { cx.setter.end_set_parameter(&cx.p.dice_amt); }
     if resp.hovered() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal); }
+    // master volume: the output gain as a slider left of the dice; its value shows while touched
+    let fp = &cx.p.out;
+    let vr = Rect::from_min_max(pos2(dr.left() - 92.0, 8.0), pos2(dr.left() - 12.0, 32.0));
+    let vresp = cx.ui.interact(vr, egui::Id::new("master-vol"), Sense::click_and_drag());
+    let u = fp.unmodulated_normalized_value();
+    let raw_id = vresp.id.with("raw");
+    if vresp.drag_started() { cx.setter.begin_set_parameter(fp); cx.ui.memory_mut(|m| m.data.insert_temp(raw_id, u)); }
+    if vresp.dragged() {
+        let fine = cx.ui.input(|i| i.modifiers.shift);
+        let raw = (cx.ui.memory(|m| m.data.get_temp::<f32>(raw_id)).unwrap_or(u) + vresp.drag_delta().x / if fine { 600.0 } else { vr.width() }).clamp(0.0, 1.0);
+        cx.ui.memory_mut(|m| m.data.insert_temp(raw_id, raw));
+        cx.setter.set_parameter_normalized(fp, raw);
+    }
+    if vresp.drag_stopped() { cx.setter.end_set_parameter(fp); }
+    if vresp.double_clicked() { cx.setter.begin_set_parameter(fp); cx.setter.set_parameter_normalized(fp, fp.default_normalized_value()); cx.setter.end_set_parameter(fp); }
+    let dy = if vresp.hovered() { wheel(cx).1 } else { 0.0 };
+    if dy != 0.0 { cx.setter.begin_set_parameter(fp); cx.setter.set_parameter_normalized(fp, (u + dy / 400.0).clamp(0.0, 1.0)); cx.setter.end_set_parameter(fp); }
+    let hot = vresp.hovered() || vresp.dragged();
+    if hot { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal); }
+    let track = Rect::from_min_max(pos2(vr.left() + 4.0, y - 1.5), pos2(vr.right() - 4.0, y + 1.5));
+    pt.rect_filled(track, CornerRadius::same(2), TRACK);
+    let u = fp.unmodulated_normalized_value();
+    let kx = track.left() + u * track.width();
+    pt.rect_filled(Rect::from_min_max(track.min, pos2(kx, track.max.y)), CornerRadius::same(2), if hot { DIM } else { Color32::from_rgb(0x55, 0x55, 0x5a) });
+    // unity gain mark
+    let zx = track.left() + fp.default_normalized_value() * track.width();
+    pt.line_segment([pos2(zx, y - 4.0), pos2(zx, y + 4.0)], Stroke::new(1.0, Color32::from_rgb(0x3a, 0x3a, 0x3e)));
+    pt.circle_filled(pos2(kx, y), if hot { 5.5 } else { 4.5 }, if hot { BRIGHT } else { DIM });
+    if hot { cx.text(pos2(vr.center().x, vr.bottom() + 5.0), egui::Align2::CENTER_CENTER, &format!("{} dB", format!("{:+.1}", fp.value()).replace('-', "−")), mono(9.0), TEXT); }
 }
 
 fn load_preset(cx: &Cx, st: &mut Ui, i: usize) {
@@ -508,14 +536,6 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         }
         if aresp.hovered() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::Grab); }
         if aresp.drag_started() { drag_out(st, view, &(1..view.lanes.len()).collect::<Vec<_>>()); }
-        let fp = &cx.p.out;
-        let vr = Rect::from_min_size(pos2(32.0, row - 8.0), vec2(40.0, 16.0));
-        let resp = cx.ui.interact(vr, egui::Id::new("out-lvl"), Sense::click_and_drag());
-        vertical_drag(cx, &resp, fp);
-        if resp.double_clicked() { cx.setter.begin_set_parameter(fp); cx.setter.set_parameter_normalized(fp, fp.default_normalized_value()); cx.setter.end_set_parameter(fp); }
-        let hot = resp.hovered() || resp.dragged();
-        if hot { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical); }
-        cx.text(pos2(34.0, row), egui::Align2::LEFT_CENTER, &format!("{:.1}", fp.value()).replace('-', "−"), mono(10.0), if hot { TEXT } else { DIMMER });
         cx.text(pos2(118.0, row), egui::Align2::RIGHT_CENTER, &format!("{:.1} pk", view.peak_db).replace('-', "−"), mono(9.0), Color32::from_rgb(0x4c, 0x4c, 0x50));
     } else {
         cx.text(pos2(50.0, y + h / 2.0 + 9.0), egui::Align2::LEFT_CENTER, &lvl, mono(10.0), lc);
@@ -626,16 +646,46 @@ fn tonal_chart(cx: &mut Cx, st: &mut Ui, view: &View, r: Rect) {
     line(&view.tob, Color32::from_rgb(0xf2, 0x8a, 0x12), 1.6);
 }
 
+/// A layer's amplitude envelope across the view (dB scale, 0 dB at the top, −48 at the bottom) with one handle
+/// where it ends: dragging it sets the length, moving the gate and, for the exponential shape, the decay with it.
+fn env_curve(cx: &mut Cx, id: &str, r: Rect, knobs: [usize; 5]) {
+    let [att, dec, hold, rel, shape] = knobs;
+    let n = VIEW_MS as usize + 1;
+    let e = tearout_dsp::dsp::envelope(n, 1000.0, cx.gun(att), cx.gun(dec), cx.gun(hold), cx.gun(rel), cx.gun(shape).round() as i64);
+    let yd = |db: f64| r.top() + 4.0 + ((-db.clamp(-48.0, 0.0)) / 48.0) as f32 * (r.height() - 8.0);
+    let floor = 10f32.powf(-48.0 / 20.0);
+    let end = e.iter().rposition(|&v| v > floor).map_or(n - 1, |i| i + 1).min(n - 1);
+    let pts: Vec<Pos2> = (0..=end).map(|i| pos2(tx(r, i as f64), yd(20.0 * (e[i] as f64).max(1e-6).log10()))).collect();
+    cx.painter().add(Shape::line(pts, Stroke::new(1.0, alpha(BRIGHT, 0.3))));
+    if end >= n - 1 { return; }
+    if let Some(p) = handle(cx, &format!("{id}_len"), pos2(tx(r, end as f64), yd(-48.0)), BRIGHT, true, (true, false)) {
+        let want = tms(r, p.x).max(cx.gun(att) + 2.0);
+        let rl = cx.gun(rel).min(want * 0.5);
+        cx.set_val(hold, (want - rl).clamp(SPEC[hold].min, SPEC[hold].max));
+        cx.set_val(rel, rl.clamp(SPEC[rel].min, SPEC[rel].max));
+        // an exponential decay reaches the floor (−48 dB, a factor of e^5.5) where the gate closes
+        if cx.gun(shape).round() == 0.0 { cx.set_val(dec, ((want - cx.gun(att)) / 5.5).clamp(SPEC[dec].min, SPEC[dec].max)); }
+    }
+}
+
 fn tx(r: Rect, ms: f64) -> f32 { r.left() + (ms / VIEW_MS) as f32 * r.width() }
 fn tms(r: Rect, x: f32) -> f64 { ((x - r.left()) / r.width()) as f64 * VIEW_MS }
 fn fy(r: Rect, f: f64) -> f32 { r.top() + freq_y(f) * r.height() }
 fn yf(r: Rect, y: f32) -> f64 { y_freq((y - r.top()) / r.height()) }
 
 /// A draggable handle. `axes`: which coordinates the drag edits. Returns the new position while dragging.
+/// The knob a handle sets, by its id.
+fn handle_param(id: &str) -> Option<usize> {
+    let full = match id { "flt_f0" => "body_flt_f0", "flt_tau" => "body_flt_tau", "mode_f" => "body_mode_f", x => x };
+    SPEC.iter().position(|s| s.id == full)
+}
+
 fn handle(cx: &mut Cx, id: &str, at: Pos2, col: Color32, round: bool, axes: (bool, bool)) -> Option<Pos2> {
     let pt = cx.painter();
     let hr = Rect::from_center_size(at, vec2(16.0, 16.0));
-    let resp = cx.ui.interact(hr, egui::Id::new(id), Sense::drag());
+    let mut resp = cx.ui.interact(hr, egui::Id::new(id), Sense::drag());
+    // hovering names the knob it sets
+    if let Some(i) = handle_param(id) { resp = resp.on_hover_text(format!("{} {}  {}", crate::params::group_name(SPEC[i].group), SPEC[i].label, fmt_value(&SPEC[i], cx.gun(i)))); }
     let s = if resp.hovered() || resp.dragged() { 12.0 } else { 10.0 };
     let rr = Rect::from_center_size(at, vec2(s, s));
     if round { pt.circle(at, s / 2.0, col, Stroke::new(2.0, BG)); } else { pt.rect(rr, CornerRadius::same(1), col, Stroke::new(2.0, BG), StrokeKind::Outside); }
@@ -646,8 +696,7 @@ fn handle(cx: &mut Cx, id: &str, at: Pos2, col: Color32, round: bool, axes: (boo
 }
 
 /// Hold marker: thin line over the lane with a square tab on top, dragged in time.
-/// Where a layer's gate holds open (top tab), and, for layers with a gate time, the fade from there to
-/// fully closed (a slope down to a bottom tab that sets the gate time).
+/// A time marker with a tab that drags it (the reverb's size).
 fn hold_marker(cx: &mut Cx, id: &str, r: Rect, param: usize, label: &str) {
     let ms = cx.gun(param);
     let pt = cx.painter();
@@ -658,16 +707,6 @@ fn hold_marker(cx: &mut Cx, id: &str, r: Rect, param: usize, label: &str) {
     }
     let x = tx(r, ms);
     pt.line_segment([pos2(x, r.top()), pos2(x, r.bottom())], Stroke::new(1.0, alpha(BRIGHT, 0.45)));
-    let rel = match param { SUB_HOLD => Some(SUB_REL), TR_HOLD => Some(TR_REL), BODY_HOLD => Some(BODY_REL), _ => None };
-    if let Some(rp) = rel {
-        let xe = tx(r, (ms + cx.gun(rp)).min(VIEW_MS));
-        pt.line_segment([pos2(x, r.top()), pos2(xe, r.bottom())], Stroke::new(1.0, alpha(BRIGHT, 0.3)));
-        let etab = Rect::from_min_size(pos2(xe - 4.0, r.bottom() - 8.0), vec2(8.0, 8.0));
-        let eresp = cx.ui.interact(etab.expand(4.0), egui::Id::new((id, "rel")), Sense::drag());
-        pt.rect_filled(etab, CornerRadius::ZERO, alpha(BRIGHT, if eresp.hovered() || eresp.dragged() { 1.0 } else { 0.6 }));
-        if eresp.hovered() || eresp.dragged() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal); }
-        if eresp.dragged() { if let Some(p) = eresp.interact_pointer_pos() { cx.set_val(rp, (tms(r, p.x) - ms).clamp(SPEC[rp].min, SPEC[rp].max)); } }
-    }
     let tab = Rect::from_min_size(pos2(x - 4.0, r.top()), vec2(8.0, 8.0));
     let resp = cx.ui.interact(tab.expand(4.0), egui::Id::new(id), Sense::drag());
     pt.rect_filled(tab, CornerRadius::ZERO, BRIGHT);
@@ -693,7 +732,7 @@ fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32) {
             let fe = tearout_dsp::dsp::midi_hz(cx.gun(NOTE) + cx.gun(SUB_TUNE));
             let (d, tau, k) = (cx.gun(SUB_DIVE) / 12.0, cx.gun(SUB_TAU) / 1000.0, cx.gun(SUB_K));
             curve(cx, r, col, |t| fe * 2f64.powf(d * (-(t / tau).powf(k)).exp()));
-            hold_marker(cx, "sub_hold", r, SUB_HOLD, "hold");
+            env_curve(cx, "sub", r, [SUB_ATT, SUB_DEC, SUB_HOLD, SUB_REL, SUB_SHAPE]);
             if let Some(p) = handle(cx, "sub_dive", pos2(r.left() + 1.0, fy(r, fe * 2f64.powf(d))), col, true, (false, true)) {
                 cx.set_val(SUB_DIVE, (12.0 * (yf(r, p.y) / fe).log2()).clamp(SPEC[SUB_DIVE].min, SPEC[SUB_DIVE].max));
             }
@@ -703,7 +742,7 @@ fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32) {
             }
         }
         "transient" => {
-            hold_marker(cx, "tr_hold", r, TR_HOLD, "hold");
+            env_curve(cx, "tr", r, [TR_ATT, TR_DEC, TR_HOLD, TR_REL, TR_SHAPE]);
             let hx = tx(r, cx.gun(TR_HOLD).min(VIEW_MS));
             let y = fy(r, cx.gun(TR_PK_F));
             dashed(cx, pos2(r.left(), y), pos2(hx, y), col);
@@ -718,7 +757,7 @@ fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32) {
             }
             let my = fy(r, cx.gun(BODY_MODE_F));
             dashed(cx, pos2(r.left(), my), pos2(r.right(), my), col);
-            hold_marker(cx, "body_hold", r, BODY_HOLD, "hold");
+            env_curve(cx, "body", r, [BODY_ATT, BODY_DEC, BODY_HOLD, BODY_REL, BODY_SHAPE]);
             if let Some(p) = handle(cx, "flt_f0", pos2(r.left() + 1.0, fy(r, f0)), col, false, (false, true)) {
                 cx.set_val(BODY_FLT_F0, yf(r, p.y).clamp(SPEC[BODY_FLT_F0].min, SPEC[BODY_FLT_F0].max));
             }

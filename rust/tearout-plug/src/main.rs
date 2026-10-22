@@ -4,6 +4,7 @@ use tearout_plug::Tearout;
 
 fn main() {
     tearout_plug::STANDALONE.store(true, Ordering::Relaxed);
+    egui_baseview::KEEP_KEYS.store(true, Ordering::Relaxed);
     let mut args: Vec<String> = std::env::args().collect();
     // run at the output device's own rate unless one is asked for
     if !args.iter().any(|a| a == "-r" || a.starts_with("--sample-rate")) {

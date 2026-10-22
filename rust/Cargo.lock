@@ -3180,6 +3180,7 @@ dependencies = [
  "cocoa",
  "cpal",
  "crossbeam-channel",
+ "egui-baseview",
  "nih_plug",
  "nih_plug_egui",
  "objc",

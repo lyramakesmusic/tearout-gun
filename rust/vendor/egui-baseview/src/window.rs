@@ -520,7 +520,7 @@ where
             baseview::Event::Keyboard(event) => {
                 use keyboard_types::Code;
                 // keys go on to the host, so its computer keyboard keeps playing, unless a text field is being typed in
-                pass_key = !self.egui_ctx.wants_keyboard_input();
+                pass_key = !self.egui_ctx.wants_keyboard_input() && !crate::KEEP_KEYS.load(std::sync::atomic::Ordering::Relaxed);
 
                 let pressed = event.state == keyboard_types::KeyState::Down;
 

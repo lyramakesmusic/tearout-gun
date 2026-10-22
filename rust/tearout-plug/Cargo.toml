@@ -19,6 +19,7 @@ standalone = ["nih_plug/standalone", "dep:cpal"]
 tearout-dsp = { path = "../tearout-dsp" }
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git" }
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+egui-baseview = { git = "https://github.com/BillyDM/egui-baseview.git", rev = "ec70c3fe6b2f070dcacbc22924431edbe24bd1c0", default-features = false }
 crossbeam-channel = "0.5"
 serde_json = "1"
 cpal = { version = "0.15", optional = true }
