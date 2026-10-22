@@ -64,6 +64,8 @@ pub struct Shared {
     pub solo: std::sync::atomic::AtomicU32,
     /// knob groups random, mutate and dice leave alone
     pub locked: Mutex<Vec<&'static str>>,
+    /// a stem the editor plays on its own
+    pub preview: (crossbeam_channel::Sender<Arc<Sound>>, crossbeam_channel::Receiver<Arc<Sound>>),
     /// notes played so far, for the editor's activity light
     pub notes_seen: AtomicU64,
     /// the last 8192 output samples (mono) and the next write position, with the output rate
@@ -112,7 +114,7 @@ pub fn grid_interval(p: &mut Params, beats: f64, bpm: f64) {
 
 impl Default for Shared {
     fn default() -> Self {
-        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36), loaded: Mutex::new([false; 3]), tempo: AtomicU64::new(150f64.to_bits()), mute: Default::default(), solo: Default::default(), locked: Mutex::new(Vec::new()), keys: crossbeam_channel::bounded(64), scope: Mutex::new((vec![0.0; 8192], 0, 48000.0)), notes_seen: AtomicU64::new(0) }
+        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36), loaded: Mutex::new([false; 3]), tempo: AtomicU64::new(150f64.to_bits()), mute: Default::default(), solo: Default::default(), locked: Mutex::new(Vec::new()), keys: crossbeam_channel::bounded(64), scope: Mutex::new((vec![0.0; 8192], 0, 48000.0)), notes_seen: AtomicU64::new(0), preview: crossbeam_channel::bounded(4) }
     }
 }
 

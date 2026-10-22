@@ -212,6 +212,11 @@ impl Plugin for Tearout {
             if let NoteEvent::NoteOn { timing, note, velocity, .. } = ev { events.push((timing as usize, note, velocity)); }
         }
         while let Ok((note, vel)) = self.shared.keys.1.try_recv() { events.push((0, note, vel)); }
+        while let Ok(s) = self.shared.preview.1.try_recv() {
+            if self.voices.len() >= MAX_VOICES { self.voices.remove(0); }
+            let rate = tearout_dsp::SR / self.sr;
+            self.voices.push(Voice { s, pos: 0.0, rate, gain: 0.8, duck: 1.0, duck_target: 1.0, choke: 0.0, hp: [Hp::default(); 2] });
+        }
         if editor::AUDITION.swap(false, Ordering::Relaxed) {
             let note = self.params.gun.snapshot().0[tearout_dsp::id::NOTE] as u8;
             events.push((0, note, 0.8));
