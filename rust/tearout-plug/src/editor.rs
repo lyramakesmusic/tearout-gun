@@ -618,14 +618,14 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     }
     if !st.show_wave {
         if !st.show_spec {
-            // with both views off, the lane keeps a faint outline of its sound in its own colour
+            // with both views off, the lane keeps a faint grey outline of its sound
             let nall = ln.wave.len();
             let (c0, c1) = (((u0 * nall as f32) as usize).min(nall), ((u1 * nall as f32).ceil() as usize).min(nall));
             let colw = r.width() / ((u1 - u0) * nall as f32);
             let (cy, a) = (r.center().y, r.height() * 0.46);
             for (k, &(hi, lo)) in ln.wave[c0..c1].iter().enumerate() {
                 let x = r.left() + ((c0 + k) as f32 - u0 * nall as f32) * colw;
-                pt.rect_filled(Rect::from_min_max(pos2(x, cy - hi * a), pos2(x + colw, (cy - lo * a).max(cy - hi * a + 0.5))), CornerRadius::ZERO, alpha(col, 0.14));
+                pt.rect_filled(Rect::from_min_max(pos2(x, cy - hi * a), pos2(x + colw, (cy - lo * a).max(cy - hi * a + 0.5))), CornerRadius::ZERO, Color32::from_white_alpha(9));
             }
         }
         if st.show_handles { lane_overlays(cx, ln.name, r, col, sounding(ln)); }
