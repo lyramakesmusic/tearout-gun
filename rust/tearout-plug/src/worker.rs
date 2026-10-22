@@ -41,6 +41,9 @@ pub struct View {
     pub p: Params,
     pub lanes: Vec<Lane>,
     pub peak_db: f64,
+    /// the mix's third-octave balance, dB, and its loudest band
+    pub tob: [f64; crate::analysis::TOB_BANDS],
+    pub tob_max: f64,
 }
 
 pub struct Shared {
@@ -61,6 +64,8 @@ pub struct Shared {
     pub solo: std::sync::atomic::AtomicU32,
     /// knob groups random, mutate and dice leave alone
     pub locked: Mutex<Vec<&'static str>>,
+    /// the last 8192 output samples (mono) and the next write position, with the output rate
+    pub scope: Mutex<(Vec<f32>, usize, f64)>,
     /// notes the editor plays from the computer keyboard, for the audio thread
     pub keys: (crossbeam_channel::Sender<(u8, f32)>, crossbeam_channel::Receiver<(u8, f32)>),
 }
@@ -105,7 +110,7 @@ pub fn grid_interval(p: &mut Params, beats: f64, bpm: f64) {
 
 impl Default for Shared {
     fn default() -> Self {
-        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36), loaded: Mutex::new([false; 3]), tempo: AtomicU64::new(150f64.to_bits()), mute: Default::default(), solo: Default::default(), locked: Mutex::new(Vec::new()), keys: crossbeam_channel::bounded(64) }
+        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36), loaded: Mutex::new([false; 3]), tempo: AtomicU64::new(150f64.to_bits()), mute: Default::default(), solo: Default::default(), locked: Mutex::new(Vec::new()), keys: crossbeam_channel::bounded(64), scope: Mutex::new((vec![0.0; 8192], 0, 48000.0)) }
     }
 }
 
@@ -345,5 +350,8 @@ fn build_view(p: &Params, mix: &Sound, eng: &mut [Engine], version: u64) -> View
         hs.into_iter().map(|h| h.join().unwrap()).collect()
     });
     let pk = mix.l.iter().chain(&mix.r).fold(0f32, |a, &b| a.max(b.abs())) as f64;
-    View { version, patch: hash(p, false), p: p.clone(), lanes, peak_db: 20.0 * pk.max(1e-9).log10() }
+    let m: Vec<f32> = mix.l.iter().zip(&mix.r).map(|(a, b)| 0.5 * (a + b)).collect();
+    let raw = crate::analysis::third_oct(&m, sr);
+    let tob_max = raw.iter().cloned().fold(f64::MIN, f64::max);
+    View { version, patch: hash(p, false), p: p.clone(), lanes, peak_db: 20.0 * pk.max(1e-9).log10(), tob: raw.map(|v| v - tob_max), tob_max }
 }

@@ -546,10 +546,12 @@ where
                     _ => (),
                 }
 
-                if let Some(key) = crate::translate::translate_virtual_key(&event.key) {
+                // the physical key is the key's position on the keyboard, whatever caps lock or the layout make it type
+                let physical_key = crate::translate::translate_physical_key(event.code);
+                if let Some(key) = crate::translate::translate_virtual_key(&event.key).or(physical_key) {
                     self.egui_input.events.push(egui::Event::Key {
                         key,
-                        physical_key: None,
+                        physical_key,
                         pressed,
                         repeat: event.repeat,
                         modifiers: self.egui_input.modifiers,

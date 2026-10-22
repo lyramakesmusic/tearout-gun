@@ -221,6 +221,12 @@ impl Plugin for Tearout {
         if g != 1.0 { for x in l[0][..n].iter_mut().chain(r[0][..n].iter_mut()) { *x *= g; } }
         let on = self.params.limit.value();
         self.limiter.process(&mut l[0][..n], &mut r[0][..n], on);
+        // the editor's live spectrum reads the output from here
+        if let Ok(mut sc) = self.shared.scope.try_lock() {
+            let (buf, pos, sr) = &mut *sc;
+            *sr = self.sr;
+            for i in 0..n { buf[*pos] = 0.5 * (l[0][i] + r[0][i]); *pos = (*pos + 1) % buf.len(); }
+        }
         self.events = events;
         ProcessStatus::Normal
     }

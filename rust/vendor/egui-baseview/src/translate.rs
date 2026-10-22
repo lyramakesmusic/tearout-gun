@@ -149,3 +149,10 @@ pub(crate) fn set_macos_cursor(cursor: egui::CursorIcon) {
         if !cur.is_null() { let _: () = msg_send![cur, set]; }
     }
 }
+
+/// The egui key at a physical key position (letters, digits and punctuation).
+pub(crate) fn translate_physical_key(code: keyboard_types::Code) -> Option<egui::Key> {
+    let name = code.to_string();
+    let name = name.strip_prefix("Key").or_else(|| name.strip_prefix("Digit")).unwrap_or(&name);
+    egui::Key::from_name(name)
+}

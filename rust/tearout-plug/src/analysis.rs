@@ -106,3 +106,40 @@ pub fn wave_cols(l: &[f32], r: &[f32], t1: usize, cols: usize) -> Vec<(f32, f32)
 /// Log-frequency y (0 = top = FMAX, 1 = bottom = FMIN) for a frequency.
 pub fn freq_y(f: f64) -> f32 { (1.0 - (f.clamp(FMIN, FMAX) / FMIN).ln() / (FMAX / FMIN).ln()) as f32 }
 pub fn y_freq(y: f32) -> f64 { FMIN * ((FMAX / FMIN).ln() * (1.0 - y as f64)).exp() }
+
+/// Third-octave bands from 50 Hz to 20 kHz (as the web app's tonal balance).
+pub const TOB_BANDS: usize = 27;
+
+/// Power per third-octave band, dB, of `x` averaged over 8192-point Hann frames every 2048 samples
+/// (`x` shorter than a frame is zero-padded). The web app's `thirdOct`, before it is set relative to its
+/// loudest band.
+pub fn third_oct(x: &[f32], sr: f64) -> [f64; TOB_BANDS] {
+    let n = 8192;
+    let w: Vec<f64> = (0..n).map(|i| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / n as f64).cos()).collect();
+    let (mut re, mut im, mut acc) = (vec![0.0; n], vec![0.0; n], vec![0.0; n / 2]);
+    let mut frames = 0.0;
+    let mut o = 0;
+    while o + n <= n.max(x.len()) {
+        for i in 0..n { re[i] = x.get(o + i).copied().unwrap_or(0.0) as f64 * w[i]; im[i] = 0.0; }
+        fft(&mut re, &mut im, false);
+        for k in 0..n / 2 { acc[k] += re[k] * re[k] + im[k] * im[k]; }
+        frames += 1.0;
+        o += 2048;
+    }
+    std::array::from_fn(|i| {
+        let c = 1000.0 * 2f64.powf((i as f64 - 14.0) / 3.0);
+        let lo = (c / 2f64.powf(1.0 / 6.0) * n as f64 / sr).floor() as usize;
+        let hi = (c * 2f64.powf(1.0 / 6.0) * n as f64 / sr).ceil() as usize;
+        let s: f64 = (lo.max(1)..=hi.min(n / 2 - 1)).map(|k| acc[k]).sum();
+        10.0 * (s / frames + 1e-14).log10()
+    })
+}
+
+/// The gun family's reference balance, dB re its loudest band.
+pub fn gun_target() -> &'static [f64] {
+    static T: std::sync::OnceLock<Vec<f64>> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        let j: serde_json::Value = serde_json::from_str(include_str!("../../../web/targets.json")).unwrap_or_default();
+        j["gun"].as_array().into_iter().flatten().filter_map(|v| v.as_f64()).collect()
+    })
+}

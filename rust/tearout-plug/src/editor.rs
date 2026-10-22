@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tearout_dsp::id::*;
 use tearout_dsp::{from_norm, to_norm, SPEC};
 
-pub const W: f32 = 960.0;
+pub const W: f32 = 1040.0;
 pub const H: f32 = 600.0;
 pub static AUDITION: AtomicBool = AtomicBool::new(false);
 
@@ -56,6 +56,11 @@ struct Ui {
     keys_on: bool,
     keys_oct: i32,
     keys_vel: f32,
+    /// when the octave last moved (egui time)
+    keys_moved: f64,
+    /// live output bands (dB re the patch's loudest band) and when they were last updated
+    live: [f64; crate::analysis::TOB_BANDS],
+    live_t: f64,
     /// lanes draw their spectrogram and their waveform
     show_spec: bool,
     show_wave: bool,
@@ -70,7 +75,7 @@ pub fn create(params: Arc<PlugParams>, shared: Arc<Shared>, _notes: Sender<u8>) 
     let list = crate::presets::list();
     let saved = params.preset.read().map(|n| n.clone()).unwrap_or_default();
     let preset = list.iter().position(|e| e.key() == saved).or_else(|| crate::presets::index_of(&saved)).unwrap_or_else(crate::presets::default_index);
-    let st = Ui { tab: Tab::Stems, preset, list, naming: None, view: None, tex: Vec::new(), title: None, credit: None, seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, want_sel: None, editing: None, keys_on: crate::STANDALONE.load(Ordering::Relaxed), keys_oct: 2, keys_vel: 0.8, show_spec: true, show_wave: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
+    let st = Ui { tab: Tab::Stems, preset, list, naming: None, view: None, tex: Vec::new(), title: None, credit: None, seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, want_sel: None, editing: None, keys_on: crate::STANDALONE.load(Ordering::Relaxed), keys_oct: 2, keys_vel: 0.8, keys_moved: -10.0, live: [-60.0; crate::analysis::TOB_BANDS], live_t: 0.0, show_spec: true, show_wave: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
     let p2 = params.clone();
     params.editor_state.set_host_resizable(fit_size);
     create_egui_editor(params.editor_state.clone(), st, |ctx, _| setup(ctx), move |ctx, setter, st| frame(ctx, setter, st, &p2, &shared))
@@ -330,9 +335,21 @@ fn header(cx: &mut Cx, st: &mut Ui) {
         let resp = cx.ui.interact(kr, egui::Id::new("keys"), Sense::click());
         if resp.clicked() { st.keys_on = !st.keys_on; }
         let c = if st.keys_on { DIM } else if resp.hovered() { DIMMER } else { Color32::from_rgb(0x40, 0x40, 0x44) };
-        let body = Rect::from_center_size(kr.center(), vec2(20.0, 12.0));
-        pt.rect_stroke(body, CornerRadius::same(2), Stroke::new(1.3, c), StrokeKind::Middle);
-        for k in 1..5 { let x = body.left() + k as f32 * 4.0; pt.line_segment([pos2(x, body.top()), pos2(x, body.bottom())], Stroke::new(1.0, c)); }
+        // seven white keys with the five black keys over them
+        let body = Rect::from_center_size(kr.center(), vec2(21.0, 13.0));
+        pt.rect_stroke(body, CornerRadius::same(1), Stroke::new(1.2, c), StrokeKind::Middle);
+        let kw = body.width() / 7.0;
+        for k in 1..7 { let x = body.left() + k as f32 * kw; pt.line_segment([pos2(x, body.top()), pos2(x, body.bottom())], Stroke::new(1.0, c)); }
+        for k in [1, 2, 4, 5, 6] {
+            let x = body.left() + k as f32 * kw;
+            pt.rect_filled(Rect::from_min_max(pos2(x - kw * 0.32, body.top()), pos2(x + kw * 0.32, body.top() + body.height() * 0.6)), CornerRadius::ZERO, c);
+        }
+        // the range the keys play, shown for a moment after the octave moves
+        let since = cx.ui.input(|i| i.time) - st.keys_moved;
+        if st.keys_on && since < 1.5 {
+            let a = (1.0 - (since as f32 - 1.0).max(0.0) * 2.0).clamp(0.0, 1.0);
+            cx.text(pos2(kr.center().x, kr.bottom() + 6.0), egui::Align2::CENTER_CENTER, &format!("C{}–E{}", st.keys_oct - 1, st.keys_oct), mono(9.0), alpha(TEXT, a));
+        }
         rx -= 28.0 + 10.0;
     }
     let note = note_name(cx.gun(NOTE));
@@ -432,7 +449,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     let lr = Rect::from_min_size(pos2(40.0, y), vec2(78.0, h));
     if cx.ui.interact(lr, egui::Id::new(("lane", li)), Sense::click()).clicked() { st.sel = li; }
     if st.sel == li { pt.rect_filled(Rect::from_min_size(pos2(40.0, y + h / 2.0 - 15.0), vec2(2.0, 30.0)), CornerRadius::ZERO, col); }
-    cx.text(pos2(50.0, y + h / 2.0 - 7.0), egui::Align2::LEFT_CENTER, ln.name, semi(12.0), col);
+    if li != 0 { cx.text(pos2(50.0, y + h / 2.0 - 7.0), egui::Align2::LEFT_CENTER, ln.name, semi(12.0), col); }
     // a stem's level reads live from its knob and drags up and down; double-click resets it
     let lvl_id = crate::worker::LAYERS.iter().find(|l| l.0 == ln.name).map(|l| l.1).or((ln.name == "reverb").then_some(REV_LVL));
     let lvl = match lvl_id { Some(i) => format!("{:.1}", cx.gun(i)), None => format!("{:.1} pk", view.peak_db) }.replace('-', "−");
@@ -446,27 +463,31 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         if resp.hovered() || resp.dragged() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical); lc = TEXT; }
     }
     if li == 0 {
-        // the whole gun: output level (drag, double-click resets), its peak, and every stem at once
+        // the whole gun: its tonal balance against the gun reference, with the live output underneath;
+        // below, every stem at once, the output level (drag, double-click resets) and the peak
+        let chart = Rect::from_min_max(pos2(10.0, y + 2.0), pos2(118.0, y + h - 22.0));
+        tonal_chart(cx, st, view, chart);
+        let row = y + h - 10.0;
+        let ar = Rect::from_center_size(pos2(18.0, row), vec2(16.0, 18.0));
+        let aresp = cx.ui.interact(ar, egui::Id::new("all-stems"), Sense::drag());
+        let ac = if aresp.hovered() || aresp.dragged() { TEXT } else { Color32::from_rgb(0x55, 0x55, 0x5a) };
+        for k in 0..3 {
+            let o = k as f32 * 2.5;
+            let page = Rect::from_min_size(pos2(ar.left() + 2.0 + o, ar.top() + 2.0 + o), vec2(8.0, 10.0));
+            pt.rect_filled(page, CornerRadius::same(1), BG);
+            pt.rect_stroke(page, CornerRadius::same(1), Stroke::new(1.0, ac), StrokeKind::Middle);
+        }
+        if aresp.hovered() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::Grab); }
+        if aresp.drag_started() { drag_out(st, view, &(1..view.lanes.len()).collect::<Vec<_>>()); }
         let fp = &cx.p.out;
-        let vr = Rect::from_min_size(pos2(46.0, y + h / 2.0 + 1.0), vec2(48.0, 16.0));
+        let vr = Rect::from_min_size(pos2(32.0, row - 8.0), vec2(40.0, 16.0));
         let resp = cx.ui.interact(vr, egui::Id::new("out-lvl"), Sense::click_and_drag());
         vertical_drag(cx, &resp, fp);
         if resp.double_clicked() { cx.setter.begin_set_parameter(fp); cx.setter.set_parameter_normalized(fp, fp.default_normalized_value()); cx.setter.end_set_parameter(fp); }
         let hot = resp.hovered() || resp.dragged();
         if hot { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical); }
-        cx.text(pos2(50.0, y + h / 2.0 + 9.0), egui::Align2::LEFT_CENTER, &format!("{:.1}", fp.value()).replace('-', "−"), mono(10.0), if hot { TEXT } else { DIMMER });
-        cx.text(pos2(50.0, y + h / 2.0 + 23.0), egui::Align2::LEFT_CENTER, &format!("{:.1} pk", view.peak_db).replace('-', "−"), mono(9.0), Color32::from_rgb(0x4c, 0x4c, 0x50));
-        let ar = Rect::from_center_size(pos2(25.0, y + h / 2.0), vec2(20.0, 26.0));
-        let aresp = cx.ui.interact(ar, egui::Id::new("all-stems"), Sense::drag());
-        let ac = if aresp.hovered() || aresp.dragged() { TEXT } else { Color32::from_rgb(0x55, 0x55, 0x5a) };
-        for k in 0..3 {
-            let o = k as f32 * 3.0;
-            let page = Rect::from_min_size(pos2(ar.left() + 3.0 + o, ar.top() + 3.0 + o), vec2(10.0, 13.0));
-            pt.rect_filled(page, CornerRadius::same(1), BG);
-            pt.rect_stroke(page, CornerRadius::same(1), Stroke::new(1.1, ac), StrokeKind::Middle);
-        }
-        if aresp.hovered() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::Grab); }
-        if aresp.drag_started() { drag_out(st, view, &(1..view.lanes.len()).collect::<Vec<_>>()); }
+        cx.text(pos2(34.0, row), egui::Align2::LEFT_CENTER, &format!("{:.1}", fp.value()).replace('-', "−"), mono(10.0), if hot { TEXT } else { DIMMER });
+        cx.text(pos2(118.0, row), egui::Align2::RIGHT_CENTER, &format!("{:.1} pk", view.peak_db).replace('-', "−"), mono(9.0), Color32::from_rgb(0x4c, 0x4c, 0x50));
     } else {
         cx.text(pos2(50.0, y + h / 2.0 + 9.0), egui::Align2::LEFT_CENTER, &lvl, mono(10.0), lc);
     }
@@ -539,6 +560,36 @@ fn lock_icon(pt: &egui::Painter, c: Pos2, on: bool, col: Color32) {
     sh.extend(pts);
     sh.push(pos2(c.x + lx + 2.5, if on { body.top() } else { top + 4.0 }));
     pt.add(Shape::line(sh, Stroke::new(1.3, col)));
+}
+
+/// Tonal balance: the gun reference (grey) and this patch (orange), dB re their loudest band from +3 to
+/// −48, with the live output's bands filled underneath at the same scale.
+fn tonal_chart(cx: &mut Cx, st: &mut Ui, view: &View, r: Rect) {
+    use crate::analysis::{gun_target, third_oct, TOB_BANDS};
+    let pt = cx.painter();
+    let xs = |i: usize| r.left() + i as f32 / (TOB_BANDS - 1) as f32 * r.width();
+    let ys = |db: f64| r.top() + ((3.0 - db.clamp(-48.0, 3.0)) / 51.0) as f32 * r.height();
+    for db in [-12.0, -24.0, -36.0] { pt.line_segment([pos2(r.left(), ys(db)), pos2(r.right(), ys(db))], Stroke::new(1.0, Color32::from_rgb(0x1e, 0x1e, 0x21))); }
+    // live: the output's last 8192 samples against the patch's loudest band, falling back at 40 dB/s
+    let (buf, sr) = cx.sh.scope.lock().map(|sc| { let (b, p, sr) = &*sc; let mut v = b[*p..].to_vec(); v.extend_from_slice(&b[..*p]); (v, *sr) }).unwrap_or_default();
+    let now = cx.ui.input(|i| i.time);
+    let dt = (now - st.live_t).clamp(0.0, 0.2);
+    st.live_t = now;
+    if !buf.is_empty() {
+        let bands = third_oct(&buf, sr);
+        for k in 0..TOB_BANDS { st.live[k] = (bands[k] - view.tob_max).max(st.live[k] - 40.0 * dt); }
+    }
+    let base = r.bottom();
+    let mut poly = vec![pos2(r.left(), base)];
+    poly.extend((0..TOB_BANDS).map(|k| pos2(xs(k), ys(st.live[k]))));
+    poly.push(pos2(r.right(), base));
+    for k in 0..TOB_BANDS - 1 {
+        let q = [pos2(xs(k), base), pos2(xs(k), ys(st.live[k])), pos2(xs(k + 1), ys(st.live[k + 1])), pos2(xs(k + 1), base)];
+        pt.add(Shape::convex_polygon(q.to_vec(), Color32::from_white_alpha(14), Stroke::NONE));
+    }
+    let line = |vals: &[f64], col: Color32, w: f32| pt.add(Shape::line(vals.iter().enumerate().map(|(k, &v)| pos2(xs(k), ys(v))).collect(), Stroke::new(w, col)));
+    line(gun_target(), Color32::from_rgb(0x77, 0x77, 0x7a), 1.2);
+    line(&view.tob, Color32::from_rgb(0xf2, 0x8a, 0x12), 1.6);
 }
 
 fn tx(r: Rect, ms: f64) -> f32 { r.left() + (ms / VIEW_MS) as f32 * r.width() }
@@ -813,7 +864,7 @@ const SECTIONS: [(&str, &str, Color32, Option<usize>); 10] = [
     ("master", "master", MST_C, None),
     ("burst", "burst", MST_C, None),
 ];
-const COLS: [(usize, &[usize]); 7] = [(3, &[0]), (4, &[1]), (6, &[2]), (4, &[3]), (2, &[4, 5]), (3, &[6]), (3, &[7, 8, 9])];
+const COLS: [(usize, &[usize]); 7] = [(3, &[0]), (4, &[1]), (6, &[2]), (4, &[3]), (2, &[4, 5]), (3, &[6]), (3, &[8, 7, 9])];
 
 /// The signature in the knobs tab's lower left, with links to GitHub and X beside it.
 fn credit(cx: &mut Cx, st: &mut Ui) {
@@ -831,7 +882,7 @@ fn credit(cx: &mut Cx, st: &mut Ui) {
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     let pt = cx.painter();
     let h = 34.0;
-    let sig = Rect::from_min_size(pos2(6.0, H - h - 4.0), vec2(h * SIG_SIZE[0] as f32 / SIG_SIZE[1] as f32, h));
+    let sig = Rect::from_min_size(pos2(12.0, H - h - 4.0), vec2(h * SIG_SIZE[0] as f32 / SIG_SIZE[1] as f32, h));
     pt.image(ids[0], sig, uv, faint);
     let mut x = sig.right() + 4.0;
     for (k, url) in [(1, "https://github.com/lyramakesmusic/tearout-gun"), (2, "https://x.com/_lyraaaa_")] {
@@ -847,8 +898,12 @@ fn credit(cx: &mut Cx, st: &mut Ui) {
 fn knobs_tab(cx: &mut Cx, st: &mut Ui) {
     credit(cx, st);
     let (kw, kh) = (35.0, 50.0);
+    // sections spread across the width; faint rules sit in the gaps between them
+    let used: f32 = COLS.iter().map(|c| c.0 as f32 * kw).sum();
+    let gap = (W - 40.0 - used) / (COLS.len() - 1) as f32;
     let mut x = 20.0;
-    for &(ncol, secs) in COLS.iter() {
+    for (ci, &(ncol, secs)) in COLS.iter().enumerate() {
+        if ci > 0 { let rx = x - gap / 2.0; cx.ui.painter().line_segment([pos2(rx, 54.0), pos2(rx, H - 44.0)], Stroke::new(1.0, Color32::from_rgb(0x1c, 0x1c, 0x1f))); }
         let mut y = 54.0;
         for &si in secs {
             let (title, g, col, sw) = SECTIONS[si];
@@ -858,7 +913,7 @@ fn knobs_tab(cx: &mut Cx, st: &mut Ui) {
             if let Some(i) = sw {
                 let br = Rect::from_center_size(pos2(x + ncol as f32 * kw - 14.0, y + 7.0), vec2(16.0, 16.0));
                 let resp = cx.ui.interact(br, egui::Id::new(("power", si)), Sense::click());
-                power_icon(cx, br.center(), if on { col } else { Color32::from_rgb(0x5c, 0x5c, 0x5e) });
+                power_icon(cx, br.center(), if on { col } else { Color32::from_rgb(0x5c, 0x5c, 0x5e) }, on);
                 if resp.clicked() {
                     if on { st.mem[si.min(7)] = cx.p.gun.p[i].unmodulated_normalized_value(); cx.set_norm(i, 0.0); } else { cx.set_norm(i, st.mem[si.min(7)].max(0.3)); }
                 }
@@ -918,16 +973,25 @@ fn knobs_tab(cx: &mut Cx, st: &mut Ui) {
             }
             y += ((count + ncol - 1) / ncol) as f32 * kh + 10.0;
         }
-        x += ncol as f32 * kw + 7.0;
+        x += ncol as f32 * kw + gap;
     }
 }
 
-fn power_icon(cx: &Cx, c: Pos2, col: Color32) {
+/// A speaker: sounding (waves) or muted (a cross).
+fn power_icon(cx: &Cx, c: Pos2, col: Color32, on: bool) {
     let pt = cx.painter();
-    let mut pts = arc_pts(c, 5.0, 0.0, 1.0);
-    pts.reverse();
-    pt.add(Shape::line(pts, Stroke::new(1.5, col)));
-    pt.line_segment([pos2(c.x, c.y - 7.0), pos2(c.x, c.y - 1.0)], Stroke::new(1.5, col));
+    let x = c.x - 3.0;
+    pt.add(Shape::convex_polygon(vec![pos2(x - 4.0, c.y - 2.5), pos2(x - 1.5, c.y - 2.5), pos2(x + 2.5, c.y - 6.0), pos2(x + 2.5, c.y + 6.0), pos2(x - 1.5, c.y + 2.5), pos2(x - 4.0, c.y + 2.5)], col, Stroke::NONE));
+    let s = Stroke::new(1.3, col);
+    if on {
+        for rad in [3.5f32, 6.5] {
+            let pts: Vec<Pos2> = (0..=8).map(|i| { let a = -0.9 + 1.8 * i as f32 / 8.0; pos2(x + 2.5 + rad * a.cos(), c.y + rad * a.sin()) }).collect();
+            pt.add(Shape::line(pts, s));
+        }
+    } else {
+        pt.line_segment([pos2(x + 5.0, c.y - 3.0), pos2(x + 10.0, c.y + 3.0)], s);
+        pt.line_segment([pos2(x + 5.0, c.y + 3.0), pos2(x + 10.0, c.y - 3.0)], s);
+    }
 }
 
 // ───────────────────────── play
@@ -984,18 +1048,22 @@ fn preset_menu(cx: &mut Cx, st: &mut Ui) {
                 if rr.clicked() { pick = Some(i); }
             }
         });
-        // the folder presets and stems live in: click reveals it, "change" picks another
+        // the folder presets and stems live in: its name (full path on hover) opens it; "change" picks another
         let fy = area.bottom() - foot / 2.0;
+        ui.painter().line_segment([pos2(area.left() + 8.0, area.bottom() - foot), pos2(area.right() - 8.0, area.bottom() - foot)], Stroke::new(1.0, Color32::from_rgb(0x2a, 0x2a, 0x2d)));
         let path = crate::export::root();
-        let shown = path.to_string_lossy().replace(&std::env::var("HOME").unwrap_or_default(), "~");
-        let pr = Rect::from_min_max(pos2(area.left() + 8.0, fy - 9.0), pos2(area.right() - 56.0, fy + 9.0));
-        let presp = ui.interact(pr, egui::Id::new("folder-path"), Sense::click());
-        let galley = ui.painter().layout(shown, sans(10.0), if presp.hovered() { TEXT } else { DIMMER }, pr.width() - 6.0);
-        ui.painter().with_clip_rect(pr).galley(pos2(pr.left() + 6.0, fy - galley.size().y / 2.0), galley, DIMMER);
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let pr = Rect::from_min_max(pos2(area.left() + 8.0, fy - 9.0), pos2(area.right() - 60.0, fy + 9.0));
+        let presp = ui.interact(pr, egui::Id::new("folder-path"), Sense::click()).on_hover_text(path.to_string_lossy());
+        let fc = if presp.hovered() { TEXT } else { DIM };
+        let fx = pr.left() + 6.0;
+        let st_ = Stroke::new(1.1, fc);
+        ui.painter().add(Shape::closed_line(vec![pos2(fx, fy - 4.0), pos2(fx + 4.0, fy - 4.0), pos2(fx + 5.5, fy - 2.5), pos2(fx + 11.0, fy - 2.5), pos2(fx + 11.0, fy + 4.5), pos2(fx, fy + 4.5)], st_));
+        ui.painter().text(pos2(fx + 17.0, fy), egui::Align2::LEFT_CENTER, &name, sans(11.0), fc);
         if presp.clicked() { crate::export::reveal(&path); }
-        let cr = Rect::from_min_max(pos2(area.right() - 56.0, fy - 9.0), pos2(area.right() - 6.0, fy + 9.0));
+        let cr = Rect::from_min_max(pos2(area.right() - 60.0, fy - 9.0), pos2(area.right() - 8.0, fy + 9.0));
         let cresp = ui.interact(cr, egui::Id::new("folder-change"), Sense::click());
-        ui.painter().text(cr.center(), egui::Align2::CENTER_CENTER, "change", sans(10.0), if cresp.hovered() { BRIGHT } else { DIM });
+        ui.painter().text(pos2(cr.right() - 4.0, fy), egui::Align2::RIGHT_CENTER, "change…", sans(10.0), if cresp.hovered() { TEXT } else { DIMMER });
         if cresp.clicked() { change = true; }
     });
     if change { pick_folder(); st.list = crate::presets::list(); }
@@ -1012,13 +1080,14 @@ fn computer_keys(cx: &mut Cx, st: &mut Ui) {
     use egui::Key::*;
     const NOTES: [(egui::Key, i32); 17] = [(A, 0), (W, 1), (S, 2), (E, 3), (D, 4), (F, 5), (T, 6), (G, 7), (Y, 8), (H, 9), (U, 10), (J, 11), (K, 12), (O, 13), (L, 14), (P, 15), (Semicolon, 16)];
     if cx.ui.ctx().wants_keyboard_input() { return; }
-    let presses: Vec<egui::Key> = cx.ui.input(|i| i.events.iter().filter_map(|e| match e { egui::Event::Key { key, pressed: true, repeat: false, .. } => Some(*key), _ => None }).collect());
+    // keys by position on the keyboard, so caps lock and layouts don't change them
+    let presses: Vec<egui::Key> = cx.ui.input(|i| i.events.iter().filter_map(|e| match e { egui::Event::Key { key, physical_key, pressed: true, repeat: false, .. } => Some(physical_key.unwrap_or(*key)), _ => None }).collect());
     for key in presses {
         if key == M { st.keys_on = !st.keys_on; continue; }
         if !st.keys_on { continue; }
         match key {
-            Z => st.keys_oct = (st.keys_oct - 1).max(0),
-            X => st.keys_oct = (st.keys_oct + 1).min(8),
+            Z => { st.keys_oct = (st.keys_oct - 1).max(0); st.keys_moved = cx.ui.input(|i| i.time); }
+            X => { st.keys_oct = (st.keys_oct + 1).min(8); st.keys_moved = cx.ui.input(|i| i.time); }
             C => st.keys_vel = (st.keys_vel - 0.15).max(0.05),
             V => st.keys_vel = (st.keys_vel + 0.15).min(1.0),
             _ => if let Some(&(_, k)) = NOTES.iter().find(|n| n.0 == key) {
