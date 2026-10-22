@@ -42,6 +42,9 @@ fn gauss(r: &mut Rng) -> f64 {
 
 fn is_enum(i: usize) -> bool { SPEC[i].scale == Scale::Int && SPEC[i].unit.contains('/') }
 
+/// Chance per roll that each unfitted feature switch comes on.
+const FEATURE_ODDS: f64 = 0.06;
+
 /// A fresh gun: a fitted gun jittered, spice usually off, tops balanced.
 pub fn randomize(p: &Params, r: &mut Rng) -> Params {
     let pr = priors();
@@ -52,6 +55,13 @@ pub fn randomize(p: &Params, r: &mut Rng) -> Params {
         if s.group.starts_with("sample") || i == LEN || (s.group == "burst" && s.id != "b_jitter") { continue; }
         if i == SEED { q.0[i] = 1.0 + (r.next() * 9999.0).floor(); continue; }
         let fitted = anchor.and_then(|a| a[i]);
+        // a knob the fit never set whose default sits at a range end is a feature switch (layer delays and
+        // swells, zap, stutter, synth, vowels): it stays at its default unless this roll turns it on
+        if fitted.is_none() && pr.mean[i].is_none() && (s.def == s.min || s.def == s.max) {
+            let off = to_norm(s, s.def);
+            q.0[i] = if r.next() < FEATURE_ODDS { from_norm(s, off + gauss(r).abs() * 0.22 * if s.def == s.max { -1.0 } else { 1.0 }) } else { s.def };
+            continue;
+        }
         let base = match fitted { Some(v) => to_norm(s, v), None => pr.mean[i].unwrap_or_else(|| to_norm(s, s.def)) };
         let sd = if fitted.is_some() { 0.08 } else { pr.sd[i].unwrap_or(0.22) };
         let mut u = base + gauss(r) * sd;
