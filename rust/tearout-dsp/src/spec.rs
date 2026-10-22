@@ -3,10 +3,10 @@
 pub enum Scale { Lin, Log, Int }
 #[derive(Clone, Copy, Debug)]
 pub struct Spec { pub id: &'static str, pub group: &'static str, pub label: &'static str, pub min: f64, pub max: f64, pub def: f64, pub scale: Scale, pub unit: &'static str, pub fit: bool }
-pub const N: usize = 198;
+pub const N: usize = 199;
 pub const SPEC: [Spec; N] = [
   Spec { id: "note", group: "global", label: "note", min: 21.0, max: 47.0, def: 26.0, scale: Scale::Int, unit: "midi", fit: true },
-  Spec { id: "len", group: "global", label: "length", min: 200.0, max: 1500.0, def: 900.0, scale: Scale::Lin, unit: "ms", fit: false },
+  Spec { id: "len", group: "global", label: "length", min: 200.0, max: 8000.0, def: 900.0, scale: Scale::Log, unit: "ms", fit: false },
   Spec { id: "seed", group: "global", label: "seed", min: 1.0, max: 9999.0, def: 1.0, scale: Scale::Int, unit: "", fit: false },
   Spec { id: "sub_lvl", group: "sub", label: "level", min: -60.0, max: 6.0, def: 0.0, scale: Scale::Lin, unit: "dB", fit: true },
   Spec { id: "sub_tune", group: "sub", label: "tune", min: -12.0, max: 24.0, def: 0.0, scale: Scale::Lin, unit: "st", fit: true },
@@ -20,7 +20,7 @@ pub const SPEC: [Spec; N] = [
   Spec { id: "sub_delay", group: "sub", label: "delay", min: 0.0, max: 60.0, def: 0.0, scale: Scale::Lin, unit: "ms", fit: true },
   Spec { id: "sub_att", group: "sub", label: "attack", min: 0.0, max: 10.0, def: 0.2, scale: Scale::Lin, unit: "ms", fit: true },
   Spec { id: "sub_dec", group: "sub", label: "decay", min: 20.0, max: 4000.0, def: 900.0, scale: Scale::Log, unit: "ms", fit: true },
-  Spec { id: "sub_hold", group: "sub", label: "hold", min: 20.0, max: 1400.0, def: 420.0, scale: Scale::Log, unit: "ms", fit: true },
+  Spec { id: "sub_hold", group: "sub", label: "hold", min: 20.0, max: 4000.0, def: 420.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "sub_rel", group: "sub", label: "gate", min: 1.0, max: 300.0, def: 15.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "sub_noise", group: "sub", label: "noise", min: -60.0, max: 6.0, def: -60.0, scale: Scale::Lin, unit: "dB", fit: true },
   Spec { id: "sub_noise_hp", group: "sub", label: "noise highpass", min: 100.0, max: 8000.0, def: 1500.0, scale: Scale::Log, unit: "Hz", fit: true },
@@ -49,7 +49,7 @@ pub const SPEC: [Spec; N] = [
   Spec { id: "tr_delay", group: "tr", label: "delay", min: 0.0, max: 60.0, def: 0.0, scale: Scale::Lin, unit: "ms", fit: true },
   Spec { id: "tr_att", group: "tr", label: "attack", min: 0.0, max: 5.0, def: 0.1, scale: Scale::Lin, unit: "ms", fit: true },
   Spec { id: "tr_dec", group: "tr", label: "decay", min: 2.0, max: 600.0, def: 60.0, scale: Scale::Log, unit: "ms", fit: true },
-  Spec { id: "tr_hold", group: "tr", label: "hold", min: 5.0, max: 400.0, def: 70.0, scale: Scale::Log, unit: "ms", fit: true },
+  Spec { id: "tr_hold", group: "tr", label: "hold", min: 5.0, max: 2000.0, def: 70.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "tr_rel", group: "tr", label: "gate", min: 0.5, max: 80.0, def: 3.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "tr_drive", group: "tr", label: "drive", min: 0.0, max: 40.0, def: 12.0, scale: Scale::Lin, unit: "dB", fit: true },
   Spec { id: "body_lvl", group: "body", label: "level", min: -60.0, max: 6.0, def: -9.0, scale: Scale::Lin, unit: "dB", fit: true },
@@ -88,7 +88,7 @@ pub const SPEC: [Spec; N] = [
   Spec { id: "body_delay", group: "body", label: "delay", min: 0.0, max: 60.0, def: 0.0, scale: Scale::Lin, unit: "ms", fit: true },
   Spec { id: "body_att", group: "body", label: "attack", min: 0.0, max: 20.0, def: 0.5, scale: Scale::Lin, unit: "ms", fit: true },
   Spec { id: "body_dec", group: "body", label: "decay", min: 10.0, max: 4000.0, def: 400.0, scale: Scale::Log, unit: "ms", fit: true },
-  Spec { id: "body_hold", group: "body", label: "hold", min: 20.0, max: 1000.0, def: 280.0, scale: Scale::Log, unit: "ms", fit: true },
+  Spec { id: "body_hold", group: "body", label: "hold", min: 20.0, max: 4000.0, def: 280.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "body_rel", group: "body", label: "gate", min: 1.0, max: 300.0, def: 8.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "body_drive", group: "body", label: "drive", min: 0.0, max: 40.0, def: 14.0, scale: Scale::Lin, unit: "dB", fit: true },
   Spec { id: "body_fold", group: "body", label: "fold", min: 0.0, max: 1.0, def: 0.15, scale: Scale::Lin, unit: "", fit: true },
@@ -114,15 +114,15 @@ pub const SPEC: [Spec; N] = [
   Spec { id: "syn_delay", group: "synth", label: "delay", min: 0.0, max: 60.0, def: 0.0, scale: Scale::Lin, unit: "ms", fit: true },
   Spec { id: "syn_att", group: "synth", label: "attack", min: 0.0, max: 20.0, def: 0.5, scale: Scale::Lin, unit: "ms", fit: true },
   Spec { id: "syn_dec", group: "synth", label: "decay", min: 10.0, max: 4000.0, def: 400.0, scale: Scale::Log, unit: "ms", fit: true },
-  Spec { id: "syn_hold", group: "synth", label: "hold", min: 20.0, max: 1000.0, def: 220.0, scale: Scale::Log, unit: "ms", fit: true },
+  Spec { id: "syn_hold", group: "synth", label: "hold", min: 20.0, max: 4000.0, def: 220.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "syn_rel", group: "synth", label: "gate", min: 1.0, max: 300.0, def: 8.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "syn_drive", group: "synth", label: "drive", min: 0.0, max: 40.0, def: 8.0, scale: Scale::Lin, unit: "dB", fit: true },
   Spec { id: "syn_width", group: "synth", label: "width", min: 0.0, max: 1.0, def: 0.5, scale: Scale::Lin, unit: "", fit: true },
   Spec { id: "s1_lvl", group: "sample1", label: "level", min: -60.0, max: 6.0, def: -60.0, scale: Scale::Lin, unit: "dB", fit: true },
   Spec { id: "s1_pitch", group: "sample1", label: "pitch", min: -24.0, max: 24.0, def: 0.0, scale: Scale::Lin, unit: "st", fit: true },
   Spec { id: "s1_key", group: "sample1", label: "tracking", min: 0.0, max: 1.0, def: 0.0, scale: Scale::Int, unit: "fixed/key", fit: true },
-  Spec { id: "s1_start", group: "sample1", label: "start", min: 0.0, max: 500.0, def: 0.0, scale: Scale::Lin, unit: "ms", fit: true },
-  Spec { id: "s1_len", group: "sample1", label: "length", min: 10.0, max: 2000.0, def: 900.0, scale: Scale::Log, unit: "ms", fit: true },
+  Spec { id: "s1_start", group: "sample1", label: "start", min: 0.0, max: 10000.0, def: 0.0, scale: Scale::Lin, unit: "ms", fit: true },
+  Spec { id: "s1_len", group: "sample1", label: "length", min: 10.0, max: 10000.0, def: 900.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "s1_rel", group: "sample1", label: "gate", min: 1.0, max: 300.0, def: 10.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "s1_hp", group: "sample1", label: "highpass", min: 20.0, max: 8000.0, def: 20.0, scale: Scale::Log, unit: "Hz", fit: true },
   Spec { id: "s1_lp", group: "sample1", label: "lowpass", min: 300.0, max: 20000.0, def: 20000.0, scale: Scale::Log, unit: "Hz", fit: true },
@@ -131,8 +131,8 @@ pub const SPEC: [Spec; N] = [
   Spec { id: "s2_lvl", group: "sample2", label: "level", min: -60.0, max: 6.0, def: -60.0, scale: Scale::Lin, unit: "dB", fit: true },
   Spec { id: "s2_pitch", group: "sample2", label: "pitch", min: -24.0, max: 24.0, def: 0.0, scale: Scale::Lin, unit: "st", fit: true },
   Spec { id: "s2_key", group: "sample2", label: "tracking", min: 0.0, max: 1.0, def: 0.0, scale: Scale::Int, unit: "fixed/key", fit: true },
-  Spec { id: "s2_start", group: "sample2", label: "start", min: 0.0, max: 500.0, def: 0.0, scale: Scale::Lin, unit: "ms", fit: true },
-  Spec { id: "s2_len", group: "sample2", label: "length", min: 10.0, max: 2000.0, def: 900.0, scale: Scale::Log, unit: "ms", fit: true },
+  Spec { id: "s2_start", group: "sample2", label: "start", min: 0.0, max: 10000.0, def: 0.0, scale: Scale::Lin, unit: "ms", fit: true },
+  Spec { id: "s2_len", group: "sample2", label: "length", min: 10.0, max: 10000.0, def: 900.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "s2_rel", group: "sample2", label: "gate", min: 1.0, max: 300.0, def: 10.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "s2_hp", group: "sample2", label: "highpass", min: 20.0, max: 8000.0, def: 20.0, scale: Scale::Log, unit: "Hz", fit: true },
   Spec { id: "s2_lp", group: "sample2", label: "lowpass", min: 300.0, max: 20000.0, def: 20000.0, scale: Scale::Log, unit: "Hz", fit: true },
@@ -141,8 +141,8 @@ pub const SPEC: [Spec; N] = [
   Spec { id: "s3_lvl", group: "sample3", label: "level", min: -60.0, max: 6.0, def: -60.0, scale: Scale::Lin, unit: "dB", fit: true },
   Spec { id: "s3_pitch", group: "sample3", label: "pitch", min: -24.0, max: 24.0, def: 0.0, scale: Scale::Lin, unit: "st", fit: true },
   Spec { id: "s3_key", group: "sample3", label: "tracking", min: 0.0, max: 1.0, def: 0.0, scale: Scale::Int, unit: "fixed/key", fit: true },
-  Spec { id: "s3_start", group: "sample3", label: "start", min: 0.0, max: 500.0, def: 0.0, scale: Scale::Lin, unit: "ms", fit: true },
-  Spec { id: "s3_len", group: "sample3", label: "length", min: 10.0, max: 2000.0, def: 900.0, scale: Scale::Log, unit: "ms", fit: true },
+  Spec { id: "s3_start", group: "sample3", label: "start", min: 0.0, max: 10000.0, def: 0.0, scale: Scale::Lin, unit: "ms", fit: true },
+  Spec { id: "s3_len", group: "sample3", label: "length", min: 10.0, max: 10000.0, def: 900.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "s3_rel", group: "sample3", label: "gate", min: 1.0, max: 300.0, def: 10.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "s3_hp", group: "sample3", label: "highpass", min: 20.0, max: 8000.0, def: 20.0, scale: Scale::Log, unit: "Hz", fit: true },
   Spec { id: "s3_lp", group: "sample3", label: "lowpass", min: 300.0, max: 20000.0, def: 20000.0, scale: Scale::Log, unit: "Hz", fit: true },
@@ -155,6 +155,7 @@ pub const SPEC: [Spec; N] = [
   Spec { id: "spice_len", group: "spice", label: "length", min: 5.0, max: 800.0, def: 200.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "spice_hp", group: "spice", label: "highpass", min: 20.0, max: 4000.0, def: 300.0, scale: Scale::Log, unit: "Hz", fit: true },
   Spec { id: "spice_key", group: "spice", label: "tracking", min: 0.0, max: 1.0, def: 0.0, scale: Scale::Int, unit: "fixed/key", fit: true },
+  Spec { id: "spice_delay", group: "spice", label: "delay", min: 0.0, max: 500.0, def: 0.0, scale: Scale::Lin, unit: "ms", fit: true },
   Spec { id: "rev_lvl", group: "rev", label: "level", min: -60.0, max: 6.0, def: -18.0, scale: Scale::Lin, unit: "dB", fit: true },
   Spec { id: "rev_type", group: "rev", label: "IR", min: 0.0, max: 4.0, def: 0.0, scale: Scale::Int, unit: "plate/metal/whip/spring/room", fit: true },
   Spec { id: "rev_size", group: "rev", label: "size", min: 20.0, max: 2500.0, def: 350.0, scale: Scale::Log, unit: "ms", fit: true },
@@ -356,52 +357,53 @@ pub mod id {
   pub const SPICE_LEN: usize = 147;
   pub const SPICE_HP: usize = 148;
   pub const SPICE_KEY: usize = 149;
-  pub const REV_LVL: usize = 150;
-  pub const REV_TYPE: usize = 151;
-  pub const REV_SIZE: usize = 152;
-  pub const REV_CHAR: usize = 153;
-  pub const REV_TONE: usize = 154;
-  pub const REV_PRE: usize = 155;
-  pub const REV_HP: usize = 156;
-  pub const CR_MIX: usize = 157;
-  pub const CR_HP: usize = 158;
-  pub const CR_MUD: usize = 159;
-  pub const CR_PK_F: usize = 160;
-  pub const CR_PK_G: usize = 161;
-  pub const CR_DRIVE1: usize = 162;
-  pub const CR_HARD1: usize = 163;
-  pub const CR_DISP_N: usize = 164;
-  pub const CR_DISP_F: usize = 165;
-  pub const CR_DISP_Q: usize = 166;
-  pub const CR_CONV: usize = 167;
-  pub const CR_CONV_TYPE: usize = 168;
-  pub const CR_CONV_LEN: usize = 169;
-  pub const CR_CONV_CHAR: usize = 170;
-  pub const CR_DRIVE2: usize = 171;
-  pub const CR_RACK: usize = 172;
-  pub const CR_RACK_DEPTH: usize = 173;
-  pub const CR_PP: usize = 174;
-  pub const CR_PP_MS: usize = 175;
-  pub const CR_PP_FB: usize = 176;
-  pub const CR_FS: usize = 177;
-  pub const CR_FS_WET: usize = 178;
-  pub const MST_SUB_IN: usize = 179;
-  pub const MST_SWELL: usize = 180;
-  pub const MST_FALL: usize = 181;
-  pub const MST_SNAP: usize = 182;
-  pub const MST_OTT: usize = 183;
-  pub const MST_OTT_UP: usize = 184;
-  pub const MST_OTT_TIME: usize = 185;
-  pub const MST_DRIVE: usize = 186;
-  pub const MST_HARD: usize = 187;
-  pub const MST_MONO: usize = 188;
-  pub const MST_LOW: usize = 189;
-  pub const MST_MID: usize = 190;
-  pub const MST_HIGH: usize = 191;
-  pub const B_SHOTS: usize = 192;
-  pub const B_RATE: usize = 193;
-  pub const B_ACCEL: usize = 194;
-  pub const B_DRIFT: usize = 195;
-  pub const B_JITTER: usize = 196;
-  pub const B_GATE: usize = 197;
+  pub const SPICE_DELAY: usize = 150;
+  pub const REV_LVL: usize = 151;
+  pub const REV_TYPE: usize = 152;
+  pub const REV_SIZE: usize = 153;
+  pub const REV_CHAR: usize = 154;
+  pub const REV_TONE: usize = 155;
+  pub const REV_PRE: usize = 156;
+  pub const REV_HP: usize = 157;
+  pub const CR_MIX: usize = 158;
+  pub const CR_HP: usize = 159;
+  pub const CR_MUD: usize = 160;
+  pub const CR_PK_F: usize = 161;
+  pub const CR_PK_G: usize = 162;
+  pub const CR_DRIVE1: usize = 163;
+  pub const CR_HARD1: usize = 164;
+  pub const CR_DISP_N: usize = 165;
+  pub const CR_DISP_F: usize = 166;
+  pub const CR_DISP_Q: usize = 167;
+  pub const CR_CONV: usize = 168;
+  pub const CR_CONV_TYPE: usize = 169;
+  pub const CR_CONV_LEN: usize = 170;
+  pub const CR_CONV_CHAR: usize = 171;
+  pub const CR_DRIVE2: usize = 172;
+  pub const CR_RACK: usize = 173;
+  pub const CR_RACK_DEPTH: usize = 174;
+  pub const CR_PP: usize = 175;
+  pub const CR_PP_MS: usize = 176;
+  pub const CR_PP_FB: usize = 177;
+  pub const CR_FS: usize = 178;
+  pub const CR_FS_WET: usize = 179;
+  pub const MST_SUB_IN: usize = 180;
+  pub const MST_SWELL: usize = 181;
+  pub const MST_FALL: usize = 182;
+  pub const MST_SNAP: usize = 183;
+  pub const MST_OTT: usize = 184;
+  pub const MST_OTT_UP: usize = 185;
+  pub const MST_OTT_TIME: usize = 186;
+  pub const MST_DRIVE: usize = 187;
+  pub const MST_HARD: usize = 188;
+  pub const MST_MONO: usize = 189;
+  pub const MST_LOW: usize = 190;
+  pub const MST_MID: usize = 191;
+  pub const MST_HIGH: usize = 192;
+  pub const B_SHOTS: usize = 193;
+  pub const B_RATE: usize = 194;
+  pub const B_ACCEL: usize = 195;
+  pub const B_DRIFT: usize = 196;
+  pub const B_JITTER: usize = 197;
+  pub const B_GATE: usize = 198;
 }

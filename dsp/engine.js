@@ -17,7 +17,7 @@ export const SR = 48000;
 export const SPEC = [
   // global
   { id: 'note', g: 'global', label: 'note', min: 21, max: 47, def: 26, scale: 'int', unit: 'midi' },
-  { id: 'len', g: 'global', label: 'length', min: 200, max: 1500, def: 900, scale: 'lin', unit: 'ms', fit: false },
+  { id: 'len', g: 'global', label: 'length', min: 200, max: 8000, def: 900, scale: 'log', unit: 'ms', fit: false },
   { id: 'seed', g: 'global', label: 'seed', min: 1, max: 9999, def: 1, scale: 'int', fit: false },
 
   // SUB — sine with exponential-in-pitch dive (reference median: ~60–90 st, tau ~20 ms)
@@ -33,7 +33,7 @@ export const SPEC = [
   { id: 'sub_delay', g: 'sub', label: 'delay', min: 0, max: 60, def: 0, unit: 'ms' },
   { id: 'sub_att', g: 'sub', label: 'attack', min: 0, max: 10, def: 0.2, unit: 'ms' },
   { id: 'sub_dec', g: 'sub', label: 'decay', min: 20, max: 4000, def: 900, scale: 'log', unit: 'ms' },
-  { id: 'sub_hold', g: 'sub', label: 'hold', min: 20, max: 1400, def: 420, scale: 'log', unit: 'ms' },
+  { id: 'sub_hold', g: 'sub', label: 'hold', min: 20, max: 4000, def: 420, scale: 'log', unit: 'ms' },
   { id: 'sub_rel', g: 'sub', label: 'gate', min: 1, max: 300, def: 15, scale: 'log', unit: 'ms' },
   { id: 'sub_noise', g: 'sub', label: 'noise', min: -60, max: 6, def: -60, unit: 'dB' },
   { id: 'sub_noise_hp', g: 'sub', label: 'noise highpass', min: 100, max: 8000, def: 1500, scale: 'log', unit: 'Hz' },
@@ -64,7 +64,7 @@ export const SPEC = [
   { id: 'tr_delay', g: 'tr', label: 'delay', min: 0, max: 60, def: 0, unit: 'ms' },
   { id: 'tr_att', g: 'tr', label: 'attack', min: 0, max: 5, def: 0.1, unit: 'ms' },
   { id: 'tr_dec', g: 'tr', label: 'decay', min: 2, max: 600, def: 60, scale: 'log', unit: 'ms' },
-  { id: 'tr_hold', g: 'tr', label: 'hold', min: 5, max: 400, def: 70, scale: 'log', unit: 'ms' },
+  { id: 'tr_hold', g: 'tr', label: 'hold', min: 5, max: 2000, def: 70, scale: 'log', unit: 'ms' },
   { id: 'tr_rel', g: 'tr', label: 'gate', min: 0.5, max: 80, def: 3, scale: 'log', unit: 'ms' },
   { id: 'tr_drive', g: 'tr', label: 'drive', min: 0, max: 40, def: 12, unit: 'dB' },
 
@@ -105,7 +105,7 @@ export const SPEC = [
   { id: 'body_delay', g: 'body', label: 'delay', min: 0, max: 60, def: 0, unit: 'ms' },
   { id: 'body_att', g: 'body', label: 'attack', min: 0, max: 20, def: 0.5, unit: 'ms' },
   { id: 'body_dec', g: 'body', label: 'decay', min: 10, max: 4000, def: 400, scale: 'log', unit: 'ms' },
-  { id: 'body_hold', g: 'body', label: 'hold', min: 20, max: 1000, def: 280, scale: 'log', unit: 'ms' },
+  { id: 'body_hold', g: 'body', label: 'hold', min: 20, max: 4000, def: 280, scale: 'log', unit: 'ms' },
   { id: 'body_rel', g: 'body', label: 'gate', min: 1, max: 300, def: 8, scale: 'log', unit: 'ms' },
   { id: 'body_drive', g: 'body', label: 'drive', min: 0, max: 40, def: 14, unit: 'dB' },
   { id: 'body_fold', g: 'body', label: 'fold', min: 0, max: 1, def: 0.15 },
@@ -133,7 +133,7 @@ export const SPEC = [
   { id: 'syn_delay', g: 'synth', label: 'delay', min: 0, max: 60, def: 0, unit: 'ms' },
   { id: 'syn_att', g: 'synth', label: 'attack', min: 0, max: 20, def: 0.5, unit: 'ms' },
   { id: 'syn_dec', g: 'synth', label: 'decay', min: 10, max: 4000, def: 400, scale: 'log', unit: 'ms' },
-  { id: 'syn_hold', g: 'synth', label: 'hold', min: 20, max: 1000, def: 220, scale: 'log', unit: 'ms' },
+  { id: 'syn_hold', g: 'synth', label: 'hold', min: 20, max: 4000, def: 220, scale: 'log', unit: 'ms' },
   { id: 'syn_rel', g: 'synth', label: 'gate', min: 1, max: 300, def: 8, scale: 'log', unit: 'ms' },
   { id: 'syn_drive', g: 'synth', label: 'drive', min: 0, max: 40, def: 8, unit: 'dB' },
   { id: 'syn_width', g: 'synth', label: 'width', min: 0, max: 1, def: 0.5 },
@@ -142,8 +142,8 @@ export const SPEC = [
   { id: 's1_lvl', g: 'sample1', label: 'level', min: -60, max: 6, def: -60, unit: 'dB' },
   { id: 's1_pitch', g: 'sample1', label: 'pitch', min: -24, max: 24, def: 0, unit: 'st' },
   { id: 's1_key', g: 'sample1', label: 'tracking', min: 0, max: 1, def: 0, scale: 'int', unit: 'fixed/key' },
-  { id: 's1_start', g: 'sample1', label: 'start', min: 0, max: 500, def: 0, unit: 'ms' },
-  { id: 's1_len', g: 'sample1', label: 'length', min: 10, max: 2000, def: 900, scale: 'log', unit: 'ms' },
+  { id: 's1_start', g: 'sample1', label: 'start', min: 0, max: 10000, def: 0, unit: 'ms' },
+  { id: 's1_len', g: 'sample1', label: 'length', min: 10, max: 10000, def: 900, scale: 'log', unit: 'ms' },
   { id: 's1_rel', g: 'sample1', label: 'gate', min: 1, max: 300, def: 10, scale: 'log', unit: 'ms' },
   { id: 's1_hp', g: 'sample1', label: 'highpass', min: 20, max: 8000, def: 20, scale: 'log', unit: 'Hz' },
   { id: 's1_lp', g: 'sample1', label: 'lowpass', min: 300, max: 20000, def: 20000, scale: 'log', unit: 'Hz' },
@@ -152,8 +152,8 @@ export const SPEC = [
   { id: 's2_lvl', g: 'sample2', label: 'level', min: -60, max: 6, def: -60, unit: 'dB' },
   { id: 's2_pitch', g: 'sample2', label: 'pitch', min: -24, max: 24, def: 0, unit: 'st' },
   { id: 's2_key', g: 'sample2', label: 'tracking', min: 0, max: 1, def: 0, scale: 'int', unit: 'fixed/key' },
-  { id: 's2_start', g: 'sample2', label: 'start', min: 0, max: 500, def: 0, unit: 'ms' },
-  { id: 's2_len', g: 'sample2', label: 'length', min: 10, max: 2000, def: 900, scale: 'log', unit: 'ms' },
+  { id: 's2_start', g: 'sample2', label: 'start', min: 0, max: 10000, def: 0, unit: 'ms' },
+  { id: 's2_len', g: 'sample2', label: 'length', min: 10, max: 10000, def: 900, scale: 'log', unit: 'ms' },
   { id: 's2_rel', g: 'sample2', label: 'gate', min: 1, max: 300, def: 10, scale: 'log', unit: 'ms' },
   { id: 's2_hp', g: 'sample2', label: 'highpass', min: 20, max: 8000, def: 20, scale: 'log', unit: 'Hz' },
   { id: 's2_lp', g: 'sample2', label: 'lowpass', min: 300, max: 20000, def: 20000, scale: 'log', unit: 'Hz' },
@@ -162,8 +162,8 @@ export const SPEC = [
   { id: 's3_lvl', g: 'sample3', label: 'level', min: -60, max: 6, def: -60, unit: 'dB' },
   { id: 's3_pitch', g: 'sample3', label: 'pitch', min: -24, max: 24, def: 0, unit: 'st' },
   { id: 's3_key', g: 'sample3', label: 'tracking', min: 0, max: 1, def: 0, scale: 'int', unit: 'fixed/key' },
-  { id: 's3_start', g: 'sample3', label: 'start', min: 0, max: 500, def: 0, unit: 'ms' },
-  { id: 's3_len', g: 'sample3', label: 'length', min: 10, max: 2000, def: 900, scale: 'log', unit: 'ms' },
+  { id: 's3_start', g: 'sample3', label: 'start', min: 0, max: 10000, def: 0, unit: 'ms' },
+  { id: 's3_len', g: 'sample3', label: 'length', min: 10, max: 10000, def: 900, scale: 'log', unit: 'ms' },
   { id: 's3_rel', g: 'sample3', label: 'gate', min: 1, max: 300, def: 10, scale: 'log', unit: 'ms' },
   { id: 's3_hp', g: 'sample3', label: 'highpass', min: 20, max: 8000, def: 20, scale: 'log', unit: 'Hz' },
   { id: 's3_lp', g: 'sample3', label: 'lowpass', min: 300, max: 20000, def: 20000, scale: 'log', unit: 'Hz' },
@@ -178,6 +178,7 @@ export const SPEC = [
   { id: 'spice_len', g: 'spice', label: 'length', min: 5, max: 800, def: 200, scale: 'log', unit: 'ms' },
   { id: 'spice_hp', g: 'spice', label: 'highpass', min: 20, max: 4000, def: 300, scale: 'log', unit: 'Hz' },
   { id: 'spice_key', g: 'spice', label: 'tracking', min: 0, max: 1, def: 0, scale: 'int', unit: 'fixed/key' },
+  { id: 'spice_delay', g: 'spice', label: 'delay', min: 0, max: 500, def: 0, scale: 'lin', unit: 'ms' },
 
   // REVERB — convolver with synthesized IRs
   { id: 'rev_lvl', g: 'rev', label: 'level', min: -60, max: 6, def: -18, unit: 'dB' },
@@ -918,7 +919,7 @@ export function renderShot(p, n, sr = SR) {
     if (S > 1 && layers[k]) layers[k] = layers[k].map((x) => { const y = x.slice(); for (let i = 0; i < Math.min(S, n); i++) y[i] *= 0.5 - 0.5 * Math.cos((Math.PI * i) / S); return y; });
   }
   // per-layer onset delay (staggered layers: transient, then shell, then wash)
-  const DLY = { sub: p.sub_delay, tr: p.tr_delay, body: p.body_delay, synth: p.syn_delay };
+  const DLY = { sub: p.sub_delay, tr: p.tr_delay, body: p.body_delay, synth: p.syn_delay, spice: p.spice_delay };
   for (const [k, ms] of Object.entries(DLY)) {
     const d = Math.floor(((ms || 0) * sr) / 1000);
     if (d > 0 && layers[k]) layers[k] = layers[k].map((x) => { const y = new Float32Array(n); if (d < n) y.set(x.subarray(0, n - d), d); return y; });

@@ -96,7 +96,7 @@ impl Engine {
         // per-layer swell: a raised-sine ramp-in after the layer's drive, for ^-shaped (chug) attacks;
         // then per-layer onset delay (staggered layers: transient, then shell, then wash)
         let [l0, l1, l2, l3, l4, ..] = &mut ly;
-        for (layer, swell, delay) in [(&mut *l0, p[SUB_SWELL], p[SUB_DELAY]), (&mut *l1, p[TR_SWELL], p[TR_DELAY]), (&mut *l2, p[BODY_SWELL], p[BODY_DELAY]), (&mut *l3, p[SYN_SWELL], p[SYN_DELAY])] {
+        for (layer, swell, delay) in [(&mut *l0, p[SUB_SWELL], p[SUB_DELAY]), (&mut *l1, p[TR_SWELL], p[TR_DELAY]), (&mut *l2, p[BODY_SWELL], p[BODY_DELAY]), (&mut *l3, p[SYN_SWELL], p[SYN_DELAY]), (&mut *l4, 0.0, p[SPICE_DELAY])] {
             let Some((a, b)) = layer else { continue };
             let s = (swell * sr / 1000.0).floor() as usize;
             if s > 1 {

@@ -23,7 +23,15 @@ pub fn all() -> &'static [Preset] {
             out.push(Preset { name, p });
         }
         // "default" is the sound the web app opens on
-        if let Some(f) = out.iter().find(|x| x.name == "filament").cloned() { out.insert(0, Preset { name: "default".into(), p: f.p }); }
+        // with its transient and body about half as long
+        if let Some(f) = out.iter().find(|x| x.name == "filament").cloned() {
+            use tearout_dsp::id::*;
+            let mut p = f.p;
+            for k in [TR_HOLD, TR_DEC, TR_REL, BODY_HOLD, BODY_DEC, BODY_REL] { p.0[k] = (p.0[k] * 0.5).max(SPEC[k].min); }
+            // and spice on, quietly
+            p.0[SPICE_LVL] = -15.0;
+            out.insert(0, Preset { name: "default".into(), p });
+        }
         out
     })
 }

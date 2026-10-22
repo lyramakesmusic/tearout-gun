@@ -64,6 +64,10 @@ struct Ui {
     /// live output bands (dB re the patch's loudest band) and when they were last updated
     live: [f64; crate::analysis::TOB_BANDS],
     live_t: f64,
+    /// where the header's left controls end
+    header_x: f32,
+    /// a sample lane being renamed: its slot and the name so far
+    renaming: Option<(usize, String)>,
     /// how far the stems are scrolled
     lane_scroll: f32,
     /// lanes draw their spectrogram and their waveform
@@ -80,7 +84,7 @@ pub fn create(params: Arc<PlugParams>, shared: Arc<Shared>, _notes: Sender<u8>) 
     let list = crate::presets::list();
     let saved = params.preset.read().map(|n| n.clone()).unwrap_or_default();
     let preset = list.iter().position(|e| e.key() == saved).or_else(|| crate::presets::index_of(&saved)).unwrap_or_else(crate::presets::default_index);
-    let st = Ui { tab: Tab::Stems, preset, list, naming: None, view: None, tex: Vec::new(), title: None, credit: None, seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, want_sel: None, editing: None, keys_on: crate::STANDALONE.load(Ordering::Relaxed), keys_oct: 2, keys_vel: 0.8, keys_moved: -10.0, notes_seen: 0, note_t: -10.0, live: [-60.0; crate::analysis::TOB_BANDS], live_t: 0.0, lane_scroll: 0.0, show_spec: true, show_wave: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
+    let st = Ui { tab: Tab::Stems, preset, list, naming: None, view: None, tex: Vec::new(), title: None, credit: None, seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, want_sel: None, editing: None, keys_on: crate::STANDALONE.load(Ordering::Relaxed), keys_oct: 2, keys_vel: 0.8, keys_moved: -10.0, notes_seen: 0, note_t: -10.0, live: [-60.0; crate::analysis::TOB_BANDS], live_t: 0.0, header_x: 400.0, renaming: None, lane_scroll: 0.0, show_spec: true, show_wave: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
     let p2 = params.clone();
     params.editor_state.set_host_resizable(fit_size);
     create_egui_editor(params.editor_state.clone(), st, |ctx, _| setup(ctx), move |ctx, setter, st| frame(ctx, setter, st, &p2, &shared))
@@ -192,6 +196,7 @@ fn drop_zone(cx: &mut Cx, st: &mut Ui) {
         let slot = (1..=3).find(|&k| paths[k - 1].is_empty() && !used.contains(&k)).or(sel).unwrap_or(3);
         used.push(slot);
         if let Ok(mut s) = cx.p.samples.write() { s[slot - 1] = path.to_string_lossy().into_owned(); }
+        if let Ok(mut n) = cx.p.sample_names.write() { n[slot - 1] = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(); }
         let lvl = S1_LVL + 10 * (slot - 1);
         if cx.gun(lvl) <= -59.0 { cx.set_val(lvl, -6.0); }
         st.want_sel = Some(slot);
@@ -324,6 +329,7 @@ fn header(cx: &mut Cx, st: &mut Ui) {
         }
         x += 30.0;
     }
+    st.header_x = x;
     // right side: dice, note, audition
     let mut rx = W - 20.0;
     let pr = Rect::from_center_size(pos2(rx - 14.0, y), vec2(28.0, 28.0));
@@ -388,35 +394,29 @@ fn header(cx: &mut Cx, st: &mut Ui) {
     if resp.dragged() { cx.setter.set_parameter(&cx.p.dice_amt, (amt + resp.drag_delta().x / 200.0).clamp(0.0, 1.0)); }
     if resp.drag_stopped() { cx.setter.end_set_parameter(&cx.p.dice_amt); }
     if resp.hovered() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal); }
-    // master volume: the output gain as a slider left of the dice; its value shows while touched
-    let fp = &cx.p.out;
-    let vr = Rect::from_min_max(pos2(dr.left() - 92.0, 8.0), pos2(dr.left() - 12.0, 32.0));
-    let vresp = cx.ui.interact(vr, egui::Id::new("master-vol"), Sense::click_and_drag());
-    let u = fp.unmodulated_normalized_value();
-    let raw_id = vresp.id.with("raw");
-    if vresp.drag_started() { cx.setter.begin_set_parameter(fp); cx.ui.memory_mut(|m| m.data.insert_temp(raw_id, u)); }
-    if vresp.dragged() {
-        let fine = cx.ui.input(|i| i.modifiers.shift);
-        let raw = (cx.ui.memory(|m| m.data.get_temp::<f32>(raw_id)).unwrap_or(u) + vresp.drag_delta().x / if fine { 600.0 } else { vr.width() }).clamp(0.0, 1.0);
-        cx.ui.memory_mut(|m| m.data.insert_temp(raw_id, raw));
-        cx.setter.set_parameter_normalized(fp, raw);
+    // vol: the output gain as a small knob left of the dice, named beside it; its value shows while touched
+    let kc = pos2(dr.left() - 22.0, y);
+    let resp = knob(cx, (4, 0), &cx.p.out, kc, 8.0, BRIGHT, None);
+    let hot = resp.hovered() || resp.dragged();
+    cx.text(pos2(kc.x - 14.0, y), egui::Align2::RIGHT_CENTER, "vol", sans(11.0), if hot { TEXT } else { DIMMER });
+    if hot { cx.text(pos2(kc.x, kc.y + 17.0), egui::Align2::CENTER_CENTER, &format!("{} dB", format!("{:+.1}", cx.p.out.value()).replace('-', "−")), mono(9.0), TEXT); }
+    // the output as it plays, between the view toggles and vol
+    let sr_ = Rect::from_min_max(pos2(st.header_x + 16.0, 10.0), pos2(kc.x - 46.0, 30.0));
+    if sr_.width() > 40.0 {
+        let buf = cx.sh.scope.lock().map(|sc| { let (b, p, _) = &*sc; let mut v = b[*p..].to_vec(); v.extend_from_slice(&b[..*p]); v }).unwrap_or_default();
+        let cols = sr_.width() as usize;
+        if !buf.is_empty() && cols > 0 {
+            let per = buf.len() / cols;
+            let c = sr_.center().y;
+            for k in 0..cols {
+                let seg = &buf[k * per..(k + 1) * per];
+                let (lo, hi) = seg.iter().fold((0f32, 0f32), |(a, b), &v| (a.min(v), b.max(v)));
+                let x = sr_.left() + k as f32 + 0.5;
+                let a = sr_.height() * 0.5;
+                pt.line_segment([pos2(x, c - hi.min(1.0) * a), pos2(x, c - lo.max(-1.0) * a - 0.5)], Stroke::new(1.0, Color32::from_rgb(0x4a, 0x4a, 0x4e)));
+            }
+        }
     }
-    if vresp.drag_stopped() { cx.setter.end_set_parameter(fp); }
-    if vresp.double_clicked() { cx.setter.begin_set_parameter(fp); cx.setter.set_parameter_normalized(fp, fp.default_normalized_value()); cx.setter.end_set_parameter(fp); }
-    let dy = if vresp.hovered() { wheel(cx).1 } else { 0.0 };
-    if dy != 0.0 { cx.setter.begin_set_parameter(fp); cx.setter.set_parameter_normalized(fp, (u + dy / 400.0).clamp(0.0, 1.0)); cx.setter.end_set_parameter(fp); }
-    let hot = vresp.hovered() || vresp.dragged();
-    if hot { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal); }
-    let track = Rect::from_min_max(pos2(vr.left() + 4.0, y - 1.5), pos2(vr.right() - 4.0, y + 1.5));
-    pt.rect_filled(track, CornerRadius::same(2), TRACK);
-    let u = fp.unmodulated_normalized_value();
-    let kx = track.left() + u * track.width();
-    pt.rect_filled(Rect::from_min_max(track.min, pos2(kx, track.max.y)), CornerRadius::same(2), if hot { DIM } else { Color32::from_rgb(0x55, 0x55, 0x5a) });
-    // unity gain mark
-    let zx = track.left() + fp.default_normalized_value() * track.width();
-    pt.line_segment([pos2(zx, y - 4.0), pos2(zx, y + 4.0)], Stroke::new(1.0, Color32::from_rgb(0x3a, 0x3a, 0x3e)));
-    pt.circle_filled(pos2(kx, y), if hot { 5.5 } else { 4.5 }, if hot { BRIGHT } else { DIM });
-    if hot { cx.text(pos2(vr.center().x, vr.bottom() + 5.0), egui::Align2::CENTER_CENTER, &format!("{} dB", format!("{:+.1}", fp.value()).replace('-', "−")), mono(9.0), TEXT); }
 }
 
 fn load_preset(cx: &Cx, st: &mut Ui, i: usize) {
@@ -506,7 +506,28 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     // label
     let lr = Rect::from_min_size(pos2(40.0, y), vec2(78.0, h));
     if cx.ui.interact(lr, egui::Id::new(("lane", li)), Sense::click()).clicked() { st.sel = li; }
-    if li != 0 { cx.text(pos2(50.0, y + h / 2.0 - 7.0), egui::Align2::LEFT_CENTER, ln.name, semi(12.0), col); }
+    if let Some(slot) = crate::worker::sample_slot(ln.name) {
+        // a sample lane shows its name; click it to rename in place
+        let named = cx.p.sample_names.read().map(|n| n[slot - 1].clone()).unwrap_or_default();
+        let shown = if named.is_empty() { ln.name.to_string() } else { named };
+        let nr = Rect::from_min_size(pos2(46.0, y + h / 2.0 - 15.0), vec2(76.0, 16.0));
+        if let Some((k, buf)) = st.renaming.as_mut().filter(|e| e.0 == slot) {
+            let _ = k;
+            cx.ui.painter().rect_filled(nr, CornerRadius::same(3), TRACK);
+            let resp = cx.ui.put(nr.shrink2(vec2(3.0, 1.0)), egui::TextEdit::singleline(buf).font(semi(12.0)).frame(false).text_color(BRIGHT).desired_width(nr.width() - 6.0));
+            if !resp.has_focus() && !resp.lost_focus() { resp.request_focus(); }
+            if resp.lost_focus() {
+                let cancel = cx.ui.input(|i| i.key_pressed(egui::Key::Escape));
+                if !cancel { let v = buf.trim().to_string(); if let Ok(mut n) = cx.p.sample_names.write() { n[slot - 1] = v; } }
+                st.renaming = None;
+            }
+        } else {
+            let resp = cx.ui.interact(nr, egui::Id::new(("rename", slot)), Sense::click()).on_hover_cursor(egui::CursorIcon::Text);
+            let galley = cx.ui.painter().layout_no_wrap(shown.clone(), semi(12.0), col);
+            cx.ui.painter().with_clip_rect(nr).galley(pos2(nr.left() + 4.0, nr.center().y - galley.size().y / 2.0), galley, col);
+            if resp.clicked() { st.sel = li; st.renaming = Some((slot, shown)); }
+        }
+    } else if li != 0 { cx.text(pos2(50.0, y + h / 2.0 - 7.0), egui::Align2::LEFT_CENTER, ln.name, semi(12.0), col); }
     // a stem's level reads live from its knob and drags up and down; double-click resets it
     let lvl_id = crate::worker::LAYERS.iter().find(|l| l.0 == ln.name).map(|l| l.1).or((ln.name == "reverb").then_some(REV_LVL));
     let lvl = match lvl_id { Some(i) => format!("{:.1}", cx.gun(i)), None => format!("{:.1} pk", view.peak_db) }.replace('-', "−");
@@ -743,12 +764,7 @@ fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32) {
         }
         "transient" => {
             env_curve(cx, "tr", r, [TR_ATT, TR_DEC, TR_HOLD, TR_REL, TR_SHAPE]);
-            let hx = tx(r, cx.gun(TR_HOLD).min(VIEW_MS));
-            let y = fy(r, cx.gun(TR_PK_F));
-            dashed(cx, pos2(r.left(), y), pos2(hx, y), col);
-            if let Some(p) = handle(cx, "tr_pk_f", pos2(hx, y), col, true, (false, true)) {
-                cx.set_val(TR_PK_F, yf(r, p.y).clamp(SPEC[TR_PK_F].min, SPEC[TR_PK_F].max));
-            }
+            let _ = col;
         }
         "body" => {
             let (f0, f1, ft) = (cx.gun(BODY_FLT_F0), cx.gun(BODY_FLT_F1), cx.gun(BODY_FLT_TAU) / 1000.0);
@@ -775,6 +791,31 @@ fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32) {
             }
         }
         "reverb" => hold_marker(cx, "rev_size", r, REV_SIZE, "size"),
+        "spice" => {
+            // where the bleeps start and where they end
+            let (d, l) = (cx.gun(SPICE_DELAY), cx.gun(SPICE_LEN));
+            let y = r.center().y;
+            if let Some(p) = handle(cx, "spice_delay", pos2(tx(r, d), y), col, true, (true, false)) { cx.set_val(SPICE_DELAY, tms(r, p.x).clamp(SPEC[SPICE_DELAY].min, SPEC[SPICE_DELAY].max)); }
+            if d + l < VIEW_MS {
+                if let Some(p) = handle(cx, "spice_len", pos2(tx(r, d + l), y), col, true, (true, false)) { cx.set_val(SPICE_LEN, (tms(r, p.x) - d).clamp(SPEC[SPICE_LEN].min, SPEC[SPICE_LEN].max)); }
+            }
+        }
+        n if crate::worker::sample_slot(n).is_some() => {
+            // start crops into the file (drag right to skip more of it); the end sets how long it plays
+            let base = S1_LVL + 10 * (crate::worker::sample_slot(n).unwrap() - 1);
+            let (start, len) = (base + 3, base + 4);
+            let y = r.center().y;
+            let sx = r.left() + 1.0;
+            if let Some(p) = handle(cx, &format!("{n}_start"), pos2(sx, y), col, false, (true, false)) {
+                let drag = cx.ui.input(|i| i.pointer.delta().x);
+                cx.set_val(start, (cx.gun(start) + (drag / r.width()) as f64 * VIEW_MS).clamp(SPEC[start].min, SPEC[start].max));
+                let _ = p;
+            }
+            if cx.gun(start) > 0.5 { cx.text(pos2(sx + 10.0, y - 12.0), egui::Align2::LEFT_CENTER, &format!("+{:.0} ms", cx.gun(start)), mono(9.0), DIM); }
+            if cx.gun(len) < VIEW_MS {
+                if let Some(p) = handle(cx, &format!("{n}_len"), pos2(tx(r, cx.gun(len)), y), col, true, (true, false)) { cx.set_val(len, tms(r, p.x).clamp(SPEC[len].min, SPEC[len].max)); }
+            }
+        }
         _ => {}
     }
 }

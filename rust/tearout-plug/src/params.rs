@@ -96,6 +96,9 @@ pub struct PlugParams {
     /// Audio files layered in sample slots 1–3 (empty = no sample).
     #[persist = "samples"]
     pub samples: Arc<std::sync::RwLock<[String; 3]>>,
+    /// Their names in the editor.
+    #[persist = "sample-names"]
+    pub sample_names: Arc<std::sync::RwLock<[String; 3]>>,
 
     #[nested(group = "gun")]
     pub gun: GunKnobs,
@@ -132,6 +135,7 @@ impl Default for PlugParams {
             editor_state: EguiState::from_size((crate::editor::W * crate::editor::DEFAULT_SCALE).round() as u32, (crate::editor::H * crate::editor::DEFAULT_SCALE).round() as u32),
             preset: Arc::new(std::sync::RwLock::new(String::new())),
             samples: Arc::new(std::sync::RwLock::new(Default::default())),
+            sample_names: Arc::new(std::sync::RwLock::new(Default::default())),
             gun: GunKnobs::default(),
             duck: FloatParam::new("duck", 0.7, FloatRange::Linear { min: 0.0, max: 1.0 }).with_value_to_string(Arc::new(|v| format!("{:.0}%", v * 100.0))),
             duck_rel: FloatParam::new("duck release", 120.0, FloatRange::Skewed { min: 5.0, max: 2000.0, factor: 0.3 }).with_unit(" ms").with_value_to_string(Arc::new(|v| format!("{:.0}", v))),
