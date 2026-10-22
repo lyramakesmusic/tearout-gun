@@ -28,9 +28,15 @@ pub fn all() -> &'static [Preset] {
 /// octave nearest their designed pitch, so every sub dives toward a C.
 /// Layers that ignore the note (noise, transients, fixed resonances) stay as designed.
 fn on_c(p: &mut Params) {
+    let n0 = p.0[tearout_dsp::id::NOTE];
+    retune(p, ((n0 / 12.0).round() * 12.0).clamp(SPEC[tearout_dsp::id::NOTE].min, SPEC[tearout_dsp::id::NOTE].max));
+}
+
+/// Moves a patch to play at note `c`: the sub and synth tunings round to the octave of `c` nearest their
+/// designed pitch.
+pub fn retune(p: &mut Params, c: f64) {
     use tearout_dsp::id::*;
     let n0 = p.0[NOTE];
-    let c = ((n0 / 12.0).round() * 12.0).clamp(SPEC[NOTE].min, SPEC[NOTE].max);
     let oct = |t: f64, s: &tearout_dsp::Spec| (((n0 + t - c) / 12.0).round() * 12.0).clamp(s.min, s.max);
     p.0[NOTE] = c;
     p.0[SUB_TUNE] = oct(p.0[SUB_TUNE], &SPEC[SUB_TUNE]);

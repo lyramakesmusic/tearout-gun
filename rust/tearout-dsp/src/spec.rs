@@ -94,7 +94,7 @@ pub const SPEC: [Spec; N] = [
   Spec { id: "body_fold", group: "body", label: "fold", min: 0.0, max: 1.0, def: 0.15, scale: Scale::Lin, unit: "", fit: true },
   Spec { id: "body_width", group: "body", label: "width", min: 0.0, max: 1.0, def: 0.6, scale: Scale::Lin, unit: "", fit: true },
   Spec { id: "syn_lvl", group: "synth", label: "level", min: -60.0, max: 6.0, def: -60.0, scale: Scale::Lin, unit: "dB", fit: true },
-  Spec { id: "syn_wave", group: "synth", label: "wave", min: 0.0, max: 3.0, def: 2.0, scale: Scale::Int, unit: "saw/square/supersaw/pulse", fit: true },
+  Spec { id: "syn_wave", group: "synth", label: "wave", min: 0.0, max: 4.0, def: 2.0, scale: Scale::Int, unit: "saw/square/supersaw/pulse/sine", fit: true },
   Spec { id: "syn_oct", group: "synth", label: "octave", min: -1.0, max: 4.0, def: 2.0, scale: Scale::Int, unit: "", fit: true },
   Spec { id: "syn_tune", group: "synth", label: "tune", min: -12.0, max: 12.0, def: 0.0, scale: Scale::Lin, unit: "st", fit: true },
   Spec { id: "syn_voices", group: "synth", label: "voices", min: 1.0, max: 7.0, def: 5.0, scale: Scale::Int, unit: "", fit: true },

@@ -59,6 +59,8 @@ pub struct Shared {
     /// lanes muted and soloed for listening, one bit per [`lane_bit`]
     pub mute: std::sync::atomic::AtomicU32,
     pub solo: std::sync::atomic::AtomicU32,
+    /// knob groups random, mutate and dice leave alone
+    pub locked: Mutex<Vec<&'static str>>,
 }
 
 /// Mute/solo bit of a stem lane: the layers in [`LAYERS`] order, then reverb.
@@ -101,7 +103,7 @@ pub fn grid_interval(p: &mut Params, beats: f64, bpm: f64) {
 
 impl Default for Shared {
     fn default() -> Self {
-        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36), loaded: Mutex::new([false; 3]), tempo: AtomicU64::new(150f64.to_bits()), mute: Default::default(), solo: Default::default() }
+        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36), loaded: Mutex::new([false; 3]), tempo: AtomicU64::new(150f64.to_bits()), mute: Default::default(), solo: Default::default(), locked: Mutex::new(Vec::new()) }
     }
 }
 
@@ -268,7 +270,8 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
             Err(RecvTimeoutError::Timeout) => {}
         }
         if params.dice.value() && sh.dice_used.swap(false, Ordering::Relaxed) {
-            let mut q = roll(&p, params.dice_amt.value() as f64, &mut rng);
+            let locked = sh.locked.lock().unwrap().clone();
+            let mut q = crate::roll::keep(&p, roll(&p, params.dice_amt.value() as f64, &mut rng), &locked);
             q.0[NOTE] = fold_note(sh.last_note.load(Ordering::Relaxed));
             let o = other.render(&q);
             sh.bank.lock().unwrap().dice = Some(Arc::new(Sound { l: o.l, r: o.r, note: q.0[NOTE] }));

@@ -113,7 +113,7 @@ export const SPEC = [
 
   // SYNTH — tonal layer: polyBLEP oscillators with unison, pitch dive, filter sweep
   { id: 'syn_lvl', g: 'synth', label: 'level', min: -60, max: 6, def: -60, unit: 'dB' },
-  { id: 'syn_wave', g: 'synth', label: 'wave', min: 0, max: 3, def: 2, scale: 'int', unit: 'saw/square/supersaw/pulse' },
+  { id: 'syn_wave', g: 'synth', label: 'wave', min: 0, max: 4, def: 2, scale: 'int', unit: 'saw/square/supersaw/pulse/sine' },
   { id: 'syn_oct', g: 'synth', label: 'octave', min: -1, max: 4, def: 2, scale: 'int' },
   { id: 'syn_tune', g: 'synth', label: 'tune', min: -12, max: 12, def: 0, unit: 'st' },
   { id: 'syn_voices', g: 'synth', label: 'voices', min: 1, max: 7, def: 5, scale: 'int' },
@@ -657,7 +657,8 @@ function synthVoices(p, n, sr, r, side) {
       const f = Math.min(base * mul * Math.pow(2, D * Math.exp(-i / sr / pt)), sr * 0.45), dt = f / sr;
       ph += dt; if (ph >= 1) ph -= 1;
       let y;
-      if (wave === 0 || wave === 2) y = 2 * ph - 1 - blep(ph, dt);
+      if (wave === 4) y = Math.sin(2 * Math.PI * ph);
+      else if (wave === 0 || wave === 2) y = 2 * ph - 1 - blep(ph, dt);
       else { const pw = wave === 1 ? 0.5 : 0.18; y = (ph < pw ? 1 : -1) + blep(ph, dt) - blep((ph2 = ph - pw + (ph < pw ? 1 : 0)), dt); }
       x[i] += amp * y;
     }

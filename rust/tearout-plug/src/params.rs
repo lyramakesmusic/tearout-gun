@@ -123,7 +123,7 @@ pub const GRID: [(f64, &str); 7] = [(0.0, "off"), (0.125, "1/32"), (0.25, "1/16"
 impl Default for PlugParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(crate::editor::W as u32, crate::editor::H as u32),
+            editor_state: EguiState::from_size((crate::editor::W * crate::editor::DEFAULT_SCALE).round() as u32, (crate::editor::H * crate::editor::DEFAULT_SCALE).round() as u32),
             preset: Arc::new(std::sync::RwLock::new(String::new())),
             samples: Arc::new(std::sync::RwLock::new(Default::default())),
             gun: GunKnobs::default(),

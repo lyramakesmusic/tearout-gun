@@ -46,8 +46,6 @@ struct Ui {
     presets_open: bool,
     anchor: Option<tearout_dsp::Params>,
     last_mutation: Option<tearout_dsp::Params>,
-    /// knob groups random and mutate leave alone
-    locked: Vec<&'static str>,
     /// lanes draw their spectrogram and their waveform
     show_spec: bool,
     show_wave: bool,
@@ -59,7 +57,7 @@ struct Ui {
 }
 
 pub fn create(params: Arc<PlugParams>, shared: Arc<Shared>, _notes: Sender<u8>) -> Option<Box<dyn Editor>> {
-    let st = Ui { tab: Tab::Stems, preset: params.preset.read().ok().and_then(|n| crate::presets::index_of(&n)).unwrap_or_else(crate::presets::default_index), view: None, tex: Vec::new(), seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, locked: Vec::new(), want_sel: None, editing: None, show_spec: true, show_wave: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
+    let st = Ui { tab: Tab::Stems, preset: params.preset.read().ok().and_then(|n| crate::presets::index_of(&n)).unwrap_or_else(crate::presets::default_index), view: None, tex: Vec::new(), seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, want_sel: None, editing: None, show_spec: true, show_wave: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
     let p2 = params.clone();
     params.editor_state.set_host_resizable(fit_size);
     create_egui_editor(params.editor_state.clone(), st, |ctx, _| setup(ctx), move |ctx, setter, st| frame(ctx, setter, st, &p2, &shared))
@@ -176,6 +174,8 @@ fn drop_zone(cx: &mut Cx, st: &mut Ui) {
     }
 }
 
+/// Scale a new editor opens at.
+pub const DEFAULT_SCALE: f32 = 1.2;
 const MIN_SCALE: f32 = 0.75;
 const MAX_SCALE: f32 = 2.0;
 
@@ -186,7 +186,7 @@ fn fit_size((w, h): (u32, u32)) -> (u32, u32) {
 }
 
 /// Bottom-right grip: scales with the pointer's travel on screen from where the drag began; a
-/// double-click returns to 100%.
+/// double-click returns to the default size.
 fn resize_corner(cx: &mut Cx, scale: f32) {
     let r = Rect::from_min_max(pos2(W - 16.0, H - 16.0), pos2(W, H));
     let resp = cx.ui.interact(r, egui::Id::new("resize"), Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::ResizeNwSe);
@@ -196,7 +196,7 @@ fn resize_corner(cx: &mut Cx, scale: f32) {
         let at = crate::grab::screen_cursor().map(|c| (c.0 as f32, c.1 as f32)).or_else(|| resp.interact_pointer_pos().map(|p| (p.x * scale, p.y * scale)));
         if let Some(at) = at { cx.ui.memory_mut(|m| m.data.insert_temp(start_id, (at, scale))); }
     }
-    if resp.double_clicked() { set(1.0); }
+    if resp.double_clicked() { set(DEFAULT_SCALE); }
     else if resp.dragged() {
         let start = cx.ui.memory(|m| m.data.get_temp::<((f32, f32), f32)>(start_id));
         let now = crate::grab::screen_cursor().map(|c| (c.0 as f32, c.1 as f32)).or_else(|| resp.interact_pointer_pos().map(|p| (p.x * scale, p.y * scale)));
@@ -379,8 +379,8 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     if let Some(g) = lane_group(ln.name) {
         let lr = Rect::from_center_size(pos2(108.0, y + h / 2.0 + 9.0), vec2(16.0, 16.0));
         let resp = cx.ui.interact(lr, egui::Id::new(("lock", li)), Sense::click());
-        let on = st.locked.contains(&g);
-        if resp.clicked() { if on { st.locked.retain(|&x| x != g); } else { st.locked.push(g); } }
+        let on = cx.sh.locked.lock().unwrap().contains(&g);
+        if resp.clicked() { let mut l = cx.sh.locked.lock().unwrap(); if on { l.retain(|&x| x != g); } else { l.push(g); } }
         lock_icon(&pt, lr.center(), on, if on { col } else if resp.hovered() { BRIGHT } else { Color32::from_rgb(0x55, 0x55, 0x5a) });
     }
     // spectrogram; dragging it takes the lane out as a file (option-drag on the mix takes every stem)
@@ -862,11 +862,11 @@ fn strip_buttons(cx: &mut Cx, st: &mut Ui) {
             let cur = cx.p.gun.snapshot();
             let seed = 1.0 + (st.rng.next() * 1e6).floor();
             let mut q = if k == 0 {
-                crate::roll::roll(crate::roll::Mode::Randomize, &cur, seed, 4, 2, &st.locked)
+                crate::roll::roll(crate::roll::Mode::Randomize, &cur, seed, 4, 2, &cx.sh.locked.lock().unwrap().clone())
             } else {
                 // mutations stay around the patch they started from until something else changes it
                 if st.last_mutation.as_ref().map_or(true, |m| !same(m, &cur)) { st.anchor = Some(cur.clone()); }
-                crate::roll::roll(crate::roll::Mode::Mutate, st.anchor.as_ref().unwrap_or(&cur), seed, 4, 2, &st.locked)
+                crate::roll::roll(crate::roll::Mode::Mutate, st.anchor.as_ref().unwrap_or(&cur), seed, 4, 2, &cx.sh.locked.lock().unwrap().clone())
             };
             q.0[NOTE] = cur.0[NOTE];
             apply(cx, &q);

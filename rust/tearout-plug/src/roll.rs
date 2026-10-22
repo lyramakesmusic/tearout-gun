@@ -144,11 +144,16 @@ fn balance(e: &mut Engine, mut q: Params, locked: &[&str]) -> Params {
     q
 }
 
-/// Copy every knob of the locked groups back from `p`; any lock also keeps the noise seed, which every
-/// layer draws from.
-fn keep(p: &Params, mut q: Params, locked: &[&str]) -> Params {
+/// Copy every knob of the locked groups back from `p`, with the processing a locked layer passes through:
+/// any lock keeps the master chain and the noise seed every layer draws from, and a locked top (transient,
+/// body, synth, spice) keeps the crunch chain the tops share.
+pub fn keep(p: &Params, mut q: Params, locked: &[&str]) -> Params {
     if locked.is_empty() { return q; }
-    for i in 0..N { if locked.contains(&SPEC[i].group) { q.0[i] = p.0[i]; } }
+    let tops = locked.iter().any(|g| ["tr", "body", "synth", "spice"].contains(g));
+    for i in 0..N {
+        let g = SPEC[i].group;
+        if locked.contains(&g) || g == "master" || (tops && g == "crunch") { q.0[i] = p.0[i]; }
+    }
     q.0[SEED] = p.0[SEED];
     q
 }
@@ -250,7 +255,17 @@ pub fn roll(mode: Mode, p: &Params, seed: f64, threads: usize, k: usize, locked:
                     let mut best: Option<(f64, Params)> = None;
                     let (mut i, mut tries) = (0, 0);
                     while i < k {
-                        let q = match mode { Mode::Mutate => keep(p, mutate(p, &mut r, 0.06), locked), Mode::Randomize => balance(&mut e, keep(p, randomize(p, &mut r), locked), locked) };
+                        let q = match mode {
+                            Mode::Mutate => keep(p, mutate(p, &mut r, 0.06), locked),
+                            Mode::Randomize => {
+                                // candidates move to the note they will play at, the sub and synth to that
+                                // note's octave nearest their design, as the presets do
+                                let mut q = randomize(p, &mut r);
+                                crate::presets::retune(&mut q, p.0[NOTE]);
+                                let q = keep(p, q, locked);
+                                balance(&mut e, q, locked)
+                            }
+                        };
                         let (m, late) = mono_shot(&mut e, &q);
                         tries += 1;
                         if late > limit && tries < 3 * k { continue; }

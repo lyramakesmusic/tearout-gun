@@ -342,7 +342,9 @@ fn synth_voices(p: &Params, n: usize, sr: f64, r: &mut Rng, side: bool) -> Buf {
                 let f = (bm * curve[i]).min(sr * 0.45);
                 let dt = f / sr;
                 ph += dt; if ph >= 1.0 { ph -= 1.0; }
-                let y = if wave == 0 || wave == 2 {
+                let y = if wave == 4 {
+                    (2.0 * std::f64::consts::PI * ph).sin()
+                } else if wave == 0 || wave == 2 {
                     2.0 * ph - 1.0 - blep(ph, dt)
                 } else {
                     let pw = if wave == 1 { 0.5 } else { 0.18 };

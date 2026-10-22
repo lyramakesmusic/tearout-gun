@@ -32,7 +32,42 @@ struct Voice {
     gain: f32,
     duck: f32,
     duck_target: f32,
+    /// 0..1: how far this voice has crossfaded to its highpassed self, once a newer note took the sub
+    choke: f32,
+    hp: [Hp; 2],
 }
+
+/// 4th-order Linkwitz-Riley highpass (two Butterworth biquads), for choked voices.
+#[derive(Clone, Copy, Default)]
+struct Hp { z: [[f32; 2]; 2] }
+
+#[derive(Clone, Copy, Default)]
+struct HpCoef { b: [f32; 3], a: [f32; 2] }
+
+impl HpCoef {
+    fn new(f: f64, sr: f64) -> Self {
+        let w = 2.0 * std::f64::consts::PI * f / sr;
+        let (c, s) = (w.cos(), w.sin());
+        let al = s / (2.0 * std::f64::consts::FRAC_1_SQRT_2);
+        let a0 = 1.0 + al;
+        Self { b: [((1.0 + c) / 2.0 / a0) as f32, (-(1.0 + c) / a0) as f32, ((1.0 + c) / 2.0 / a0) as f32], a: [(-2.0 * c / a0) as f32, ((1.0 - al) / a0) as f32] }
+    }
+}
+
+impl Hp {
+    fn run(&mut self, k: &HpCoef, mut x: f32) -> f32 {
+        for z in self.z.iter_mut() {
+            let y = k.b[0] * x + z[0];
+            z[0] = k.b[1] * x - k.a[0] * y + z[1];
+            z[1] = k.b[2] * x - k.a[1] * y;
+            x = y;
+        }
+        x
+    }
+}
+
+/// Crossover below which a newer note takes over the low end.
+const CHOKE_HZ: f64 = 150.0;
 
 pub struct Tearout {
     params: Arc<PlugParams>,
@@ -43,6 +78,7 @@ pub struct Tearout {
     events: Vec<(usize, u8, f32)>,
     sr: f64,
     limiter: limiter::Limiter,
+    hp_coef: HpCoef,
 }
 
 impl Default for Tearout {
@@ -52,7 +88,7 @@ impl Default for Tearout {
         let (tx, rx) = bounded::<u8>(64);
         let (p2, s2) = (params.clone(), shared.clone());
         let worker = std::thread::Builder::new().name("tearout-render".into()).spawn(move || worker::run(p2, s2, rx)).ok();
-        Self { params, shared, note_tx: tx, worker, voices: Vec::with_capacity(MAX_VOICES), events: Vec::with_capacity(256), sr: 48000.0, limiter: limiter::Limiter::new(48000.0) }
+        Self { params, shared, note_tx: tx, worker, voices: Vec::with_capacity(MAX_VOICES), events: Vec::with_capacity(256), sr: 48000.0, limiter: limiter::Limiter::new(48000.0), hp_coef: HpCoef::new(CHOKE_HZ, 48000.0) }
     }
 }
 
@@ -69,6 +105,8 @@ impl Tearout {
         let rel_ms = self.params.duck_rel.value() as f64;
         let dstep = (1000.0 / (rel_ms.max(1.0) * self.sr)) as f32; // duck recovery per sample toward target
         let attack = (1000.0 / (3.0 * self.sr)) as f32; // 3 ms duck-down
+        let choke_step = (1000.0 / (10.0 * self.sr)) as f32; // 10 ms handover of the lows
+        let hk = self.hp_coef;
         let mut ei = 0;
         for i in 0..l_out.len() {
             while ei < events.len() && events[ei].0 <= i { let (_, nt, vel) = events[ei]; self.note_on(nt, vel); ei += 1; }
@@ -78,8 +116,15 @@ impl Tearout {
                 if ip + 1 >= v.s.l.len() { v.gain = 0.0; continue; }
                 let fr = (v.pos - ip as f64) as f32;
                 let g = v.gain * v.duck;
-                l += g * (v.s.l[ip] + (v.s.l[ip + 1] - v.s.l[ip]) * fr);
-                r += g * (v.s.r[ip] + (v.s.r[ip + 1] - v.s.r[ip]) * fr);
+                let (mut xl, mut xr) = (v.s.l[ip] + (v.s.l[ip + 1] - v.s.l[ip]) * fr, v.s.r[ip] + (v.s.r[ip + 1] - v.s.r[ip]) * fr);
+                if v.choke > 0.0 {
+                    let (hl, hr) = (v.hp[0].run(&hk, xl), v.hp[1].run(&hk, xr));
+                    xl += (hl - xl) * v.choke;
+                    xr += (hr - xr) * v.choke;
+                    v.choke = (v.choke + choke_step).min(1.0);
+                }
+                l += g * xl;
+                r += g * xr;
                 v.pos += v.rate;
                 // duck down fast, then ride the target back up over the release time
                 v.duck = if v.duck > v.duck_target { (v.duck - attack).max(v.duck_target) } else { v.duck_target };
@@ -110,11 +155,15 @@ impl Tearout {
         let target = fold_note(note);
         let rate = 2f64.powf((target - s.note) / 12.0) * tearout_dsp::SR / self.sr;
         let duck = self.params.duck.value();
-        for v in self.voices.iter_mut() { v.duck_target = v.duck_target.min(1.0 - duck); }
+        for v in self.voices.iter_mut() {
+            v.duck_target = v.duck_target.min(1.0 - duck);
+            // one sub at a time: earlier notes hand their lows to this one
+            if v.choke == 0.0 { v.choke = 1e-6; }
+        }
         if self.voices.len() >= MAX_VOICES { self.voices.remove(0); }
         let vk = self.params.vel.value();
         let gain = 1.0 - vk + vk * vel;
-        self.voices.push(Voice { s, pos: 0.0, rate, gain, duck: 1.0, duck_target: 1.0 });
+        self.voices.push(Voice { s, pos: 0.0, rate, gain, duck: 1.0, duck_target: 1.0, choke: 0.0, hp: [Hp::default(); 2] });
     }
 }
 
@@ -141,6 +190,7 @@ impl Plugin for Tearout {
     fn initialize(&mut self, _layout: &AudioIOLayout, cfg: &BufferConfig, ctx: &mut impl InitContext<Self>) -> bool {
         self.sr = cfg.sample_rate as f64;
         self.limiter = limiter::Limiter::new(self.sr);
+        self.hp_coef = HpCoef::new(CHOKE_HZ, self.sr);
         ctx.set_latency_samples(self.limiter.latency());
         true
     }
