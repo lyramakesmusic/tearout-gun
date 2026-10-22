@@ -50,6 +50,9 @@ pub struct View {
     pub tob_max: f64,
 }
 
+/// Spectrograms of one time window of a view, at full resolution.
+pub struct Zoom { pub view: u64, pub t0: f64, pub span: f64, pub rgba: Vec<Vec<u8>> }
+
 pub struct Shared {
     pub bank: Mutex<Bank>,
     pub view: Mutex<Option<Arc<View>>>,
@@ -68,6 +71,10 @@ pub struct Shared {
     pub solo: std::sync::atomic::AtomicU32,
     /// knob groups random, mutate and dice leave alone
     pub locked: Mutex<Vec<&'static str>>,
+    /// the time window the editor shows while zoomed in (start, span ms), and the sharper spectrograms made
+    /// for it
+    pub zoom_req: Mutex<Option<(f64, f64)>>,
+    pub zoom: Mutex<Option<Arc<Zoom>>>,
     /// a stem the editor plays on its own
     pub preview: (crossbeam_channel::Sender<Arc<Sound>>, crossbeam_channel::Receiver<Arc<Sound>>),
     /// notes played so far, for the editor's activity light
@@ -118,7 +125,7 @@ pub fn grid_interval(p: &mut Params, beats: f64, bpm: f64) {
 
 impl Default for Shared {
     fn default() -> Self {
-        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36), loaded: Mutex::new([false; 3]), tempo: AtomicU64::new(150f64.to_bits()), mute: Default::default(), solo: Default::default(), locked: Mutex::new(Vec::new()), keys: crossbeam_channel::bounded(64), scope: Mutex::new((vec![0.0; 8192], 0, 48000.0)), notes_seen: AtomicU64::new(0), preview: crossbeam_channel::bounded(4) }
+        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36), loaded: Mutex::new([false; 3]), tempo: AtomicU64::new(150f64.to_bits()), mute: Default::default(), solo: Default::default(), locked: Mutex::new(Vec::new()), keys: crossbeam_channel::bounded(64), scope: Mutex::new((vec![0.0; 8192], 0, 48000.0)), notes_seen: AtomicU64::new(0), preview: crossbeam_channel::bounded(4), zoom_req: Mutex::new(None), zoom: Mutex::new(None) }
     }
 }
 
@@ -305,6 +312,32 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
             *sh.view.lock().unwrap() = Some(Arc::new(v));
             sh.view_version.fetch_add(1, Ordering::Release);
             continue;
+        }
+        // a zoomed-in window gets its own spectrograms once it has held still for a moment
+        let want = *sh.zoom_req.lock().unwrap();
+        if let Some((t0, span)) = want {
+            let have_z = sh.zoom.lock().unwrap().clone();
+            let view = sh.view.lock().unwrap().clone();
+            if let Some(view) = view {
+                let fresh = have_z.as_ref().is_some_and(|z| z.view == view.version && (z.t0 - t0).abs() < 1e-6 && (z.span - span).abs() < 1e-6);
+                if !fresh {
+                    std::thread::sleep(Duration::from_millis(60));
+                    if *sh.zoom_req.lock().unwrap() == want {
+                        let sr = tearout_dsp::SR;
+                        let (s0, n) = ((t0 * sr / 1000.0) as usize, (span * sr / 1000.0) as usize);
+                        let rgba: Vec<Vec<u8>> = std::thread::scope(|sc| {
+                            let hs: Vec<_> = view.lanes.iter().map(|ln| sc.spawn(move || {
+                                let e = (s0 + n).min(ln.l.len());
+                                let m: Vec<f32> = (s0.min(e)..e).map(|i| 0.5 * (ln.l[i] + ln.r[i])).collect();
+                                colorize(&reassigned(&m, sr, n.max(1), SPEC_COLS, SPEC_ROWS, 16), ln.color)
+                            })).collect();
+                            hs.into_iter().map(|h| h.join().unwrap()).collect()
+                        });
+                        *sh.zoom.lock().unwrap() = Some(Arc::new(Zoom { view: view.version, t0, span, rgba }));
+                    }
+                    continue;
+                }
+            }
         }
         // fill the rest of the keyboard, nearest the last played note first
         let at = note_slot(sh.last_note.load(Ordering::Relaxed)) as i64;

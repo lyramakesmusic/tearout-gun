@@ -30,6 +30,10 @@ pub fn all() -> &'static [Preset] {
             for k in [TR_HOLD, TR_DEC, TR_REL, BODY_HOLD, BODY_DEC, BODY_REL] { p.0[k] = (p.0[k] * 0.5).max(SPEC[k].min); }
             // and spice on, quietly
             p.0[SPICE_LVL] = -20.0;
+            // a sub that fades out over its last 180 ms, ending where it did
+            let rl = p.0[SUB_REL].max(180.0);
+            p.0[SUB_HOLD] = (p.0[SUB_HOLD] + p.0[SUB_REL] - rl).max(SPEC[SUB_HOLD].min);
+            p.0[SUB_REL] = rl;
             // and a louder, longer reverb
             p.0[REV_LVL] = -8.0;
             p.0[REV_SIZE] = (p.0[REV_SIZE] * 1.6).min(SPEC[REV_SIZE].max);
