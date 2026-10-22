@@ -155,7 +155,7 @@ pub const SPEC: [Spec; N] = [
   Spec { id: "spice_len", group: "spice", label: "length", min: 5.0, max: 800.0, def: 200.0, scale: Scale::Log, unit: "ms", fit: true },
   Spec { id: "spice_hp", group: "spice", label: "highpass", min: 20.0, max: 4000.0, def: 300.0, scale: Scale::Log, unit: "Hz", fit: true },
   Spec { id: "spice_key", group: "spice", label: "tracking", min: 0.0, max: 1.0, def: 0.0, scale: Scale::Int, unit: "fixed/key", fit: true },
-  Spec { id: "spice_delay", group: "spice", label: "delay", min: 0.0, max: 500.0, def: 0.0, scale: Scale::Lin, unit: "ms", fit: true },
+  Spec { id: "spice_delay", group: "spice", label: "delay", min: -500.0, max: 500.0, def: 0.0, scale: Scale::Lin, unit: "ms", fit: true },
   Spec { id: "rev_lvl", group: "rev", label: "level", min: -60.0, max: 6.0, def: -18.0, scale: Scale::Lin, unit: "dB", fit: true },
   Spec { id: "rev_type", group: "rev", label: "IR", min: 0.0, max: 4.0, def: 0.0, scale: Scale::Int, unit: "plate/metal/whip/spring/room", fit: true },
   Spec { id: "rev_size", group: "rev", label: "size", min: 20.0, max: 2500.0, def: 350.0, scale: Scale::Log, unit: "ms", fit: true },

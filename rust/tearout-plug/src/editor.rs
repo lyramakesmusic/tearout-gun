@@ -3,6 +3,7 @@
 use crate::analysis::{freq_y, y_freq};
 use crate::params::{fmt_value, note_name, PlugParams};
 use crate::worker::{Shared, View, DICE, VIEW_MS};
+
 use crossbeam_channel::Sender;
 use nih_plug::prelude::*;
 use nih_plug_egui::egui::{self, pos2, vec2, Color32, CornerRadius, FontFamily, FontId, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, TextureHandle};
@@ -68,11 +69,16 @@ struct Ui {
     header_x: f32,
     /// a sample lane being renamed: its slot and the name so far
     renaming: Option<(usize, String)>,
+    /// the time window the lanes show (start, span), ms
+    t0: f64,
+    span: f64,
     /// how far the stems are scrolled
     lane_scroll: f32,
     /// lanes draw their spectrogram and their waveform
     show_spec: bool,
     show_wave: bool,
+    /// handles and curves over the lanes
+    show_handles: bool,
     /// value being typed into: gun knob index and the text so far
     editing: Option<(usize, String)>,
     /// sample slot whose lane gets selected once it appears
@@ -84,7 +90,7 @@ pub fn create(params: Arc<PlugParams>, shared: Arc<Shared>, _notes: Sender<u8>) 
     let list = crate::presets::list();
     let saved = params.preset.read().map(|n| n.clone()).unwrap_or_default();
     let preset = list.iter().position(|e| e.key() == saved).or_else(|| crate::presets::index_of(&saved)).unwrap_or_else(crate::presets::default_index);
-    let st = Ui { tab: Tab::Stems, preset, list, naming: None, view: None, tex: Vec::new(), title: None, credit: None, seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, want_sel: None, editing: None, keys_on: crate::STANDALONE.load(Ordering::Relaxed), keys_oct: 2, keys_vel: 0.8, keys_moved: -10.0, notes_seen: 0, note_t: -10.0, live: [-60.0; crate::analysis::TOB_BANDS], live_t: 0.0, header_x: 400.0, renaming: None, lane_scroll: 0.0, show_spec: true, show_wave: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
+    let st = Ui { tab: Tab::Stems, preset, list, naming: None, view: None, tex: Vec::new(), title: None, credit: None, seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, want_sel: None, editing: None, keys_on: crate::STANDALONE.load(Ordering::Relaxed), keys_oct: 2, keys_vel: 0.8, keys_moved: -10.0, notes_seen: 0, note_t: -10.0, live: [-60.0; crate::analysis::TOB_BANDS], live_t: 0.0, header_x: 400.0, renaming: None, t0: 0.0, span: VIEW_MS, lane_scroll: 0.0, show_spec: true, show_wave: true, show_handles: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
     let p2 = params.clone();
     params.editor_state.set_host_resizable(fit_size);
     create_egui_editor(params.editor_state.clone(), st, |ctx, _| setup(ctx), move |ctx, setter, st| frame(ctx, setter, st, &p2, &shared))
@@ -103,6 +109,8 @@ fn setup(ctx: &Context) {
     v.panel_fill = BG;
     ctx.set_visuals(v);
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
+    #[cfg(target_os = "macos")]
+    crate::macos::watch_pinch();
 }
 
 fn sans(s: f32) -> FontId { FontId::new(s, FontFamily::Proportional) }
@@ -144,7 +152,7 @@ fn frame(ctx: &Context, setter: &ParamSetter, st: &mut Ui, params: &Arc<PlugPara
     let v = sh.view_version.load(Ordering::Acquire);
     if v != st.seen {
         if let Some(view) = sh.view.lock().unwrap().clone() {
-            st.tex = view.lanes.iter().map(|l| ctx.load_texture(l.name, egui::ColorImage::from_rgba_unmultiplied([crate::worker::SPEC_COLS, crate::worker::SPEC_ROWS], &l.rgba), egui::TextureOptions::LINEAR)).collect();
+            st.tex = view.lanes.iter().map(|l| ctx.load_texture(l.name, egui::ColorImage::from_rgba_unmultiplied([view.cols, crate::worker::SPEC_ROWS], &l.rgba), egui::TextureOptions::LINEAR)).collect();
             if let Some(k) = st.want_sel { if let Some(i) = view.lanes.iter().position(|l| crate::worker::sample_slot(l.name) == Some(k)) { st.sel = i; st.want_sel = None; } }
             st.view = Some(view);
             st.seen = v;
@@ -196,7 +204,7 @@ fn drop_zone(cx: &mut Cx, st: &mut Ui) {
         let slot = (1..=3).find(|&k| paths[k - 1].is_empty() && !used.contains(&k)).or(sel).unwrap_or(3);
         used.push(slot);
         if let Ok(mut s) = cx.p.samples.write() { s[slot - 1] = path.to_string_lossy().into_owned(); }
-        if let Ok(mut n) = cx.p.sample_names.write() { n[slot - 1] = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(); }
+        if let Ok(mut n) = cx.p.sample_names.write() { n[slot - 1] = "sample".into(); }
         let lvl = S1_LVL + 10 * (slot - 1);
         if cx.gun(lvl) <= -59.0 { cx.set_val(lvl, -6.0); }
         st.want_sel = Some(slot);
@@ -307,12 +315,12 @@ fn header(cx: &mut Cx, st: &mut Ui) {
         tx += widths[i] + 2.0;
     }
     x += tw + 10.0;
-    // view toggles: spectrogram, waveform
-    for k in 0..2 {
+    // view toggles: spectrogram, waveform, handles
+    for k in 0..3 {
         let r = Rect::from_min_size(pos2(x, 8.0), vec2(28.0, 24.0));
         let resp = cx.ui.interact(r, egui::Id::new(("view", k)), Sense::click());
-        let on = if k == 0 { st.show_spec } else { st.show_wave };
-        if resp.clicked() { if k == 0 { st.show_spec = !on } else { st.show_wave = !on } }
+        let on = [st.show_spec, st.show_wave, st.show_handles][k];
+        if resp.clicked() { match k { 0 => st.show_spec = !on, 1 => st.show_wave = !on, _ => st.show_handles = !on } }
         let fill = if on { Color32::from_rgb(0x22, 0x22, 0x25) } else if resp.hovered() { Color32::from_rgb(0x1c, 0x1c, 0x1e) } else { Color32::TRANSPARENT };
         pt.rect_filled(r, CornerRadius::same(4), fill);
         let ic = if on { DIM } else { Color32::from_rgb(0x48, 0x48, 0x4c) };
@@ -323,9 +331,14 @@ fn header(cx: &mut Cx, st: &mut Ui) {
                 let bx = c.x - 8.0 + j as f32 * 4.0;
                 pt.rect_filled(Rect::from_min_max(pos2(bx, c.y + 5.0 - hh), pos2(bx + 2.5, c.y + 5.0)), CornerRadius::ZERO, ic);
             }
-        } else {
+        } else if k == 1 {
             let pts: Vec<Pos2> = (0..=24).map(|j| { let t = j as f32 / 24.0; pos2(c.x - 9.0 + 18.0 * t, c.y - 5.0 * (t * std::f32::consts::TAU * 1.5).sin() * (1.0 - 0.6 * t)) }).collect();
             pt.add(Shape::line(pts, Stroke::new(1.5, ic)));
+        } else {
+            // a falling curve with a handle on it
+            let pts: Vec<Pos2> = (0..=16).map(|j| { let t = j as f32 / 16.0; pos2(c.x - 9.0 + 18.0 * t, c.y - 6.0 + 12.0 * (1.0 - (-3.0 * t).exp())) }).collect();
+            pt.add(Shape::line(pts, Stroke::new(1.3, ic)));
+            pt.circle_filled(pos2(c.x - 1.0, c.y + 3.2), 2.6, ic);
         }
         x += 30.0;
     }
@@ -400,21 +413,19 @@ fn header(cx: &mut Cx, st: &mut Ui) {
     let hot = resp.hovered() || resp.dragged();
     cx.text(pos2(kc.x - 14.0, y), egui::Align2::RIGHT_CENTER, "vol", sans(11.0), if hot { TEXT } else { DIMMER });
     if hot { cx.text(pos2(kc.x, kc.y + 17.0), egui::Align2::CENTER_CENTER, &format!("{} dB", format!("{:+.1}", cx.p.out.value()).replace('-', "−")), mono(9.0), TEXT); }
-    // the output as it plays, between the view toggles and vol
-    let sr_ = Rect::from_min_max(pos2(st.header_x + 16.0, 10.0), pos2(kc.x - 46.0, 30.0));
+    // oscilloscope of the output between the view toggles and vol: the trace starts on a rising zero
+    // crossing, so a steady tone stands still
+    let sr_ = Rect::from_min_max(pos2(st.header_x + 16.0, 9.0), pos2(kc.x - 46.0, 31.0));
     if sr_.width() > 40.0 {
         let buf = cx.sh.scope.lock().map(|sc| { let (b, p, _) = &*sc; let mut v = b[*p..].to_vec(); v.extend_from_slice(&b[..*p]); v }).unwrap_or_default();
-        let cols = sr_.width() as usize;
-        if !buf.is_empty() && cols > 0 {
-            let per = buf.len() / cols;
+        let span = 1600usize;
+        if buf.len() > 2 * span {
+            let last = buf.len() - span - 1;
+            let trig = (span..last).rev().find(|&i| buf[i - 1] < 0.0 && buf[i] >= 0.0).unwrap_or(last);
+            let a = sr_.height() * 0.5;
             let c = sr_.center().y;
-            for k in 0..cols {
-                let seg = &buf[k * per..(k + 1) * per];
-                let (lo, hi) = seg.iter().fold((0f32, 0f32), |(a, b), &v| (a.min(v), b.max(v)));
-                let x = sr_.left() + k as f32 + 0.5;
-                let a = sr_.height() * 0.5;
-                pt.line_segment([pos2(x, c - hi.min(1.0) * a), pos2(x, c - lo.max(-1.0) * a - 0.5)], Stroke::new(1.0, Color32::from_rgb(0x4a, 0x4a, 0x4e)));
-            }
+            let pts: Vec<Pos2> = (0..span).step_by(2).map(|k| pos2(sr_.left() + k as f32 / span as f32 * sr_.width(), c - buf[trig + k].clamp(-1.0, 1.0) * a)).collect();
+            pt.add(Shape::line(pts, Stroke::new(1.0, Color32::from_rgb(0x5a, 0x5a, 0x5e))));
         }
     }
 }
@@ -456,6 +467,7 @@ fn stems(cx: &mut Cx, st: &mut Ui) {
         cx.text(pos2(W / 2.0, 280.0), egui::Align2::CENTER_CENTER, "rendering", sans(12.0), DIMMER);
         return;
     };
+    time_window(cx, st, &view);
     // the mix stays at the top; the stems below it keep their height and scroll
     let (mix_h, gap) = (130.0, 6.0);
     lane(cx, st, &view, 0, LANES_TOP, mix_h);
@@ -469,7 +481,8 @@ fn stems(cx: &mut Cx, st: &mut Ui) {
     let total = n as f32 * (stem_h + gap) - gap;
     let room = (total - area.height()).max(0.0);
     let over = cx.ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| area.contains(p));
-    if over { st.lane_scroll -= wheel(cx).1; }
+    let plain = cx.ui.input(|i| !(i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift));
+    if over && plain { st.lane_scroll -= wheel(cx).1; }
     st.lane_scroll = st.lane_scroll.clamp(0.0, room);
     let clip = cx.ui.clip_rect();
     cx.ui.set_clip_rect(area.intersect(clip));
@@ -510,7 +523,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         // a sample lane shows its name; click it to rename in place
         let named = cx.p.sample_names.read().map(|n| n[slot - 1].clone()).unwrap_or_default();
         let shown = if named.is_empty() { ln.name.to_string() } else { named };
-        let nr = Rect::from_min_size(pos2(46.0, y + h / 2.0 - 15.0), vec2(76.0, 16.0));
+        let nr = Rect::from_min_size(pos2(46.0, y + h / 2.0 - 15.0), vec2(LANE_X - 72.0, 16.0));
         if let Some((k, buf)) = st.renaming.as_mut().filter(|e| e.0 == slot) {
             let _ = k;
             cx.ui.painter().rect_filled(nr, CornerRadius::same(3), TRACK);
@@ -562,7 +575,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         cx.text(pos2(50.0, y + h / 2.0 + 9.0), egui::Align2::LEFT_CENTER, &lvl, mono(10.0), lc);
     }
     if let Some(slot) = crate::worker::sample_slot(ln.name) {
-        let xr = Rect::from_center_size(pos2(25.0, y + h / 2.0 + 18.0), vec2(16.0, 16.0));
+        let xr = Rect::from_center_size(pos2(LANE_X - 14.0, y + h / 2.0 - 7.0), vec2(16.0, 16.0));
         let resp = cx.ui.interact(xr, egui::Id::new(("unload", li)), Sense::click());
         let c = if resp.hovered() { BRIGHT } else { Color32::from_rgb(0x55, 0x55, 0x5a) };
         let k = 3.0;
@@ -597,26 +610,36 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         let pick: Vec<usize> = if all { (1..view.lanes.len()).collect() } else { vec![li] };
         drag_out(st, view, &pick);
     }
-    if let Some(t) = st.tex.get(li).filter(|_| st.show_spec) { pt.image(t.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE); }
-    if !st.show_wave { overlays(cx, ln.name, r, col); return; }
+    let (u0, u1) = ((view_t0() / view.len_ms) as f32, ((view_t0() + view_span()) / view.len_ms) as f32);
+    if let Some(t) = st.tex.get(li).filter(|_| st.show_spec) {
+        // the part of the sound in the view; past its end the lane stays dark
+        let rr = Rect::from_min_max(r.min, pos2(r.left() + r.width() * ((1.0 - u0) / (u1 - u0)).min(1.0), r.bottom()));
+        pt.image(t.id(), rr, Rect::from_min_max(pos2(u0, 0.0), pos2(u1.min(1.0), 1.0)), Color32::WHITE);
+    }
+    if !st.show_wave { if st.show_handles { overlays(cx, ln.name, r, col, onset(ln)); } return; }
     // waveform
-    let n = ln.wave.len();
+    let nall = ln.wave.len();
+    let (c0, c1) = (((u0 * nall as f32) as usize).min(nall), ((u1 * nall as f32).ceil() as usize).min(nall));
+    let wave = &ln.wave[c0..c1];
+    let n = wave.len().max(1);
+    let colw = r.width() / ((u1 - u0) * nall as f32);
     let (cy, a) = (r.center().y, r.height() * 0.46);
-    let xs = |c: usize| r.left() + (c as f32 + 0.5) / n as f32 * r.width();
-    let fill = Color32::from_rgba_unmultiplied(255, 255, 255, 9);
+    let xs = |c: usize| r.left() + ((c0 + c) as f32 + 0.5 - u0 * nall as f32) * colw;
+    let fill = Color32::from_rgba_unmultiplied(255, 255, 255, 5);
     let mut top = Vec::with_capacity(n);
     let mut bot = Vec::with_capacity(n);
-    for (c, &(hi, lo)) in ln.wave.iter().enumerate() {
+    let _ = n;
+    for (c, &(hi, lo)) in wave.iter().enumerate() {
         let x = xs(c);
         let (y0, y1) = (cy - hi * a, cy - lo * a);
-        pt.rect_filled(Rect::from_min_max(pos2(x - 0.5 * r.width() / n as f32, y0), pos2(x + 0.5 * r.width() / n as f32, y1.max(y0 + 0.5))), CornerRadius::ZERO, fill);
+        pt.rect_filled(Rect::from_min_max(pos2(x - 0.5 * colw, y0), pos2(x + 0.5 * colw, y1.max(y0 + 0.5))), CornerRadius::ZERO, fill);
         top.push(pos2(x, y0));
         bot.push(pos2(x, y1));
     }
-    let edge = Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 24));
+    let edge = Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 14));
     pt.add(Shape::line(top, edge));
     pt.add(Shape::line(bot, edge));
-    overlays(cx, ln.name, r, col);
+    if st.show_handles { overlays(cx, ln.name, r, col, onset(ln)); }
 }
 
 /// The knob group a stem lane's lock holds.
@@ -667,30 +690,54 @@ fn tonal_chart(cx: &mut Cx, st: &mut Ui, view: &View, r: Rect) {
     line(&view.tob, Color32::from_rgb(0xf2, 0x8a, 0x12), 1.6);
 }
 
-/// A layer's amplitude envelope across the view (dB scale, 0 dB at the top, −48 at the bottom) with one handle
-/// where it ends: dragging it sets the length, moving the gate and, for the exponential shape, the decay with it.
+/// A layer's amplitude envelope (dB scale, 0 dB at the top, −48 at the bottom) with a dot where its gate
+/// closes. Dragging the dot left or right scales the envelope's times; up and down bends an exponential decay
+/// (fuller or faster) with the end held.
 fn env_curve(cx: &mut Cx, id: &str, r: Rect, knobs: [usize; 5]) {
     let [att, dec, hold, rel, shape] = knobs;
-    let n = VIEW_MS as usize + 1;
+    let exp = cx.gun(shape).round() == 0.0;
+    let n = view_end().ceil() as usize + 1;
     let e = tearout_dsp::dsp::envelope(n, 1000.0, cx.gun(att), cx.gun(dec), cx.gun(hold), cx.gun(rel), cx.gun(shape).round() as i64);
     let yd = |db: f64| r.top() + 4.0 + ((-db.clamp(-48.0, 0.0)) / 48.0) as f32 * (r.height() - 8.0);
-    let floor = 10f32.powf(-48.0 / 20.0);
-    let end = e.iter().rposition(|&v| v > floor).map_or(n - 1, |i| i + 1).min(n - 1);
-    let pts: Vec<Pos2> = (0..=end).map(|i| pos2(tx(r, i as f64), yd(20.0 * (e[i] as f64).max(1e-6).log10()))).collect();
+    let end_ms = if exp { cx.gun(hold) + cx.gun(rel) } else { cx.gun(hold) };
+    let last = (end_ms.ceil() as usize).min(n - 1);
+    let first = view_t0().floor().max(0.0) as usize;
+    let pts: Vec<Pos2> = (first..=last.max(first)).map(|i| pos2(tx(r, i as f64), yd(20.0 * (e[i] as f64).max(1e-6).log10()))).collect();
     cx.painter().add(Shape::line(pts, Stroke::new(1.0, alpha(BRIGHT, 0.3))));
-    if end >= n - 1 { return; }
-    if let Some(p) = handle(cx, &format!("{id}_len"), pos2(tx(r, end as f64), yd(-48.0)), BRIGHT, true, (true, false)) {
-        let want = tms(r, p.x).max(cx.gun(att) + 2.0);
-        let rl = cx.gun(rel).min(want * 0.5);
-        cx.set_val(hold, (want - rl).clamp(SPEC[hold].min, SPEC[hold].max));
-        cx.set_val(rel, rl.clamp(SPEC[rel].min, SPEC[rel].max));
-        // an exponential decay reaches the floor (−48 dB, a factor of e^5.5) where the gate closes
-        if cx.gun(shape).round() == 0.0 { cx.set_val(dec, ((want - cx.gun(att)) / 5.5).clamp(SPEC[dec].min, SPEC[dec].max)); }
+    if end_ms >= view_end() || end_ms < view_t0() { return; }
+    if handle(cx, &format!("{id}_len"), pos2(tx(r, end_ms), yd(-48.0)), BRIGHT, true, (true, exp)).is_some() {
+        let d = cx.ui.input(|i| i.pointer.delta());
+        if d.x != 0.0 {
+            let want = (end_ms + (d.x / r.width()) as f64 * view_span()).max(cx.gun(att) + 2.0);
+            let k = want / end_ms.max(1.0);
+            let set = |cx: &mut Cx, i: usize, v: f64| cx.set_val(i, v.clamp(SPEC[i].min, SPEC[i].max));
+            if exp { for i in [hold, rel, dec] { let v = cx.gun(i) * k; set(cx, i, v); } } else { set(cx, hold, want); }
+        }
+        if exp && d.y != 0.0 {
+            let v = cx.gun(dec) * (-d.y as f64 * 0.015).exp();
+            cx.set_val(dec, v.clamp(SPEC[dec].min, SPEC[dec].max));
+        }
     }
 }
 
-fn tx(r: Rect, ms: f64) -> f32 { r.left() + (ms / VIEW_MS) as f32 * r.width() }
-fn tms(r: Rect, x: f32) -> f64 { ((x - r.left()) / r.width()) as f64 * VIEW_MS }
+/// When a lane first sounds (within 30 dB of its peak), in ms.
+fn onset(ln: &crate::worker::Lane) -> Option<f64> {
+    let pk = ln.l.iter().fold(0f32, |a, &v| a.max(v.abs()));
+    if pk <= 0.0 { return None; }
+    ln.l.iter().position(|&v| v.abs() > pk * 0.03).map(|i| i as f64 * 1000.0 / tearout_dsp::SR)
+}
+
+thread_local! {
+    /// the time window every lane shows: start and span, ms
+    static WINDOW: std::cell::Cell<(f64, f64)> = const { std::cell::Cell::new((0.0, VIEW_MS)) };
+}
+fn view_t0() -> f64 { WINDOW.with(|w| w.get().0) }
+fn view_span() -> f64 { WINDOW.with(|w| w.get().1) }
+fn view_end() -> f64 { view_t0() + view_span() }
+
+fn tx(r: Rect, ms: f64) -> f32 { r.left() + ((ms - view_t0()) / view_span()) as f32 * r.width() }
+/// The time under `x`, kept inside the lane so a handle dragged past its edge stays reachable.
+fn tms(r: Rect, x: f32) -> f64 { view_t0() + ((x.clamp(r.left(), r.right() - 4.0) - r.left()) / r.width()) as f64 * view_span() }
 fn fy(r: Rect, f: f64) -> f32 { r.top() + freq_y(f) * r.height() }
 fn yf(r: Rect, y: f32) -> f64 { y_freq((y - r.top()) / r.height()) }
 
@@ -721,7 +768,7 @@ fn handle(cx: &mut Cx, id: &str, at: Pos2, col: Color32, round: bool, axes: (boo
 fn hold_marker(cx: &mut Cx, id: &str, r: Rect, param: usize, label: &str) {
     let ms = cx.gun(param);
     let pt = cx.painter();
-    if ms > VIEW_MS {
+    if ms > view_end() {
         let s = format!("{} {:.0} →", label, ms);
         cx.text(pos2(r.right() - 6.0, r.top() + 10.0), egui::Align2::RIGHT_CENTER, &s, mono(10.0), BRIGHT);
         return;
@@ -736,7 +783,7 @@ fn hold_marker(cx: &mut Cx, id: &str, r: Rect, param: usize, label: &str) {
 }
 
 fn curve(cx: &Cx, r: Rect, col: Color32, f: impl Fn(f64) -> f64) {
-    let pts: Vec<Pos2> = (0..=240).map(|i| { let ms = VIEW_MS * (i as f64 / 240.0).powf(2.0); pos2(tx(r, ms), fy(r, f(ms / 1000.0))) }).collect();
+    let pts: Vec<Pos2> = (0..=240).map(|i| { let ms = view_end() * (i as f64 / 240.0).powf(2.0); pos2(tx(r, ms), fy(r, f(ms / 1000.0))) }).filter(|p| p.x >= r.left() - 1.0).collect();
     cx.painter().add(Shape::line(pts, Stroke::new(2.0, col)));
 }
 
@@ -744,7 +791,7 @@ fn dashed(cx: &Cx, a: Pos2, b: Pos2, col: Color32) {
     cx.painter().extend(Shape::dashed_line(&[a, b], Stroke::new(1.0, col), 3.0, 4.0));
 }
 
-fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32) {
+fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32, onset_ms: Option<f64>) {
     let pt = cx.painter();
     let clip = pt.clip_rect();
     let _ = clip;
@@ -795,9 +842,24 @@ fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32) {
             // where the bleeps start and where they end
             let (d, l) = (cx.gun(SPICE_DELAY), cx.gun(SPICE_LEN));
             let y = r.center().y;
-            if let Some(p) = handle(cx, "spice_delay", pos2(tx(r, d), y), col, true, (true, false)) { cx.set_val(SPICE_DELAY, tms(r, p.x).clamp(SPEC[SPICE_DELAY].min, SPEC[SPICE_DELAY].max)); }
-            if d + l < VIEW_MS {
-                if let Some(p) = handle(cx, "spice_len", pos2(tx(r, d + l), y), col, true, (true, false)) { cx.set_val(SPICE_LEN, (tms(r, p.x) - d).clamp(SPEC[SPICE_LEN].min, SPEC[SPICE_LEN].max)); }
+            // the start dot sits on the first bleep; dragging it moves the layer (left of zero crops into it)
+            let onset = onset_ms.unwrap_or(d.max(0.0));
+            if let Some(p) = handle(cx, "spice_delay", pos2(tx(r, onset), y), col, true, (true, false)) {
+                let dx = cx.ui.input(|i| i.pointer.delta().x);
+                let _ = p;
+                cx.set_val(SPICE_DELAY, (d + (dx / r.width()) as f64 * view_span()).clamp(SPEC[SPICE_DELAY].min, SPEC[SPICE_DELAY].max));
+            }
+            if d + l < view_end() {
+                if let Some(p) = handle(cx, "spice_len", pos2(tx(r, d + l), y), col, true, (true, false)) {
+                    // the bleeps spread across the length, so the first one moves with it: the delay moves back
+                    // by as much, and the start stays put
+                    let nl = (tms(r, p.x) - d).clamp(SPEC[SPICE_LEN].min, SPEC[SPICE_LEN].max);
+                    if (nl - l).abs() > 1e-6 {
+                        let lead = (onset - d).max(0.0);
+                        cx.set_val(SPICE_DELAY, (onset - lead * nl / l.max(1.0)).clamp(SPEC[SPICE_DELAY].min, SPEC[SPICE_DELAY].max));
+                        cx.set_val(SPICE_LEN, nl);
+                    }
+                }
             }
         }
         n if crate::worker::sample_slot(n).is_some() => {
@@ -808,11 +870,11 @@ fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32) {
             let sx = r.left() + 1.0;
             if let Some(p) = handle(cx, &format!("{n}_start"), pos2(sx, y), col, false, (true, false)) {
                 let drag = cx.ui.input(|i| i.pointer.delta().x);
-                cx.set_val(start, (cx.gun(start) + (drag / r.width()) as f64 * VIEW_MS).clamp(SPEC[start].min, SPEC[start].max));
+                cx.set_val(start, (cx.gun(start) + (drag / r.width()) as f64 * view_span()).clamp(SPEC[start].min, SPEC[start].max));
                 let _ = p;
             }
             if cx.gun(start) > 0.5 { cx.text(pos2(sx + 10.0, y - 12.0), egui::Align2::LEFT_CENTER, &format!("+{:.0} ms", cx.gun(start)), mono(9.0), DIM); }
-            if cx.gun(len) < VIEW_MS {
+            if cx.gun(len) < view_end() {
                 if let Some(p) = handle(cx, &format!("{n}_len"), pos2(tx(r, cx.gun(len)), y), col, true, (true, false)) { cx.set_val(len, tms(r, p.x).clamp(SPEC[len].min, SPEC[len].max)); }
             }
         }
@@ -884,6 +946,8 @@ fn control(cx: &mut Cx, id: (usize, usize), i: usize, center: Pos2, rad: f32, co
     let widest = opts.iter().map(|o| cx.text_w(o, sans(size))).fold(0.0, f32::max);
     let font = sans((size * (slot - 8.0) / widest.max(1.0)).min(size));
     let w = (widest.min(slot - 8.0) + 10.0).max(rad * 2.0 + 6.0).min(slot);
+    // in the main strip a button sits a little low, level with the knobs' weight
+    let center = if rad > 12.0 { center + vec2(0.0, 6.0) } else { center };
     let r = Rect::from_center_size(center, vec2(w, if rad > 12.0 { 22.0 } else { 18.0 }));
     let resp = cx.ui.interact(r, egui::Id::new(("knob", id)), Sense::click());
     let fill = if resp.hovered() { Color32::from_rgb(0x38, 0x38, 0x3c) } else { TRACK };
@@ -935,6 +999,35 @@ fn value_field(cx: &mut Cx, st: &mut Ui, i: usize, at: Pos2, font: FontId, col: 
     let resp = cx.ui.interact(r, egui::Id::new(("value", i)), Sense::click());
     cx.text(at, egui::Align2::CENTER_CENTER, &shown, font, if resp.hovered() { BRIGHT } else { col });
     if resp.double_clicked() { st.editing = Some((i, edit_text(s, cx.gun(i)))); }
+}
+
+/// The lanes' time window: pinch, or command/control with the wheel, zooms around the pointer; sideways
+/// scrolling (or shift with the wheel) pans. It spans 20 ms up to the whole sound.
+fn time_window(cx: &mut Cx, st: &mut Ui, view: &View) {
+    let lanes = Rect::from_min_max(pos2(LANE_X, LANES_TOP), pos2(W - 20.0, STRIP_TOP - 12.0));
+    let len = view.len_ms.max(20.0);
+    let hover = cx.ui.input(|i| i.pointer.hover_pos()).filter(|p| lanes.contains(*p));
+    #[cfg(target_os = "macos")]
+    let pinch = crate::macos::take_pinch();
+    #[cfg(not(target_os = "macos"))]
+    let pinch = 0.0f32;
+    if let Some(p) = hover {
+        let (dx, dy) = wheel(cx);
+        let m = cx.ui.input(|i| i.modifiers);
+        let zoom = if m.command || m.ctrl { (-dy as f64 * 0.01).exp() } else { 1.0 } * (-pinch as f64).exp();
+        let at = st.t0 + ((p.x - lanes.left()) / lanes.width()) as f64 * st.span;
+        if zoom != 1.0 {
+            let span = (st.span * zoom).clamp(20.0, len);
+            st.t0 = at - (at - st.t0) * span / st.span;
+            st.span = span;
+        }
+        // egui-baseview hands over sideways scrolling mirrored on macOS
+        let pan = if m.shift && !(m.command || m.ctrl) { dy } else if cfg!(target_os = "macos") { -dx } else { dx };
+        if pan != 0.0 { st.t0 -= (pan / lanes.width()) as f64 * st.span; }
+    }
+    st.span = st.span.clamp(20.0, len);
+    st.t0 = st.t0.clamp(0.0, (len - st.span).max(0.0));
+    WINDOW.with(|w| w.set((st.t0, st.span)));
 }
 
 /// This frame's mouse wheel and trackpad scrolling, in points (x, y).

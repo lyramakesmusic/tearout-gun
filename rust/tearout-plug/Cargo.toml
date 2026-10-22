@@ -27,6 +27,7 @@ symphonia = { version = "0.5", default-features = false, features = ["wav", "aif
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+block = "0.1"
 cocoa = "0.24"
 
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]

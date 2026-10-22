@@ -3177,6 +3177,7 @@ version = "0.1.0"
 name = "tearout-plug"
 version = "0.1.0"
 dependencies = [
+ "block",
  "cocoa",
  "cpal",
  "crossbeam-channel",

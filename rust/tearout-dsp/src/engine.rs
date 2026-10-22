@@ -60,6 +60,21 @@ impl Engine {
     }
     pub fn has_sample(&self, slot: usize) -> bool { self.samples[slot - 1].is_some() }
 
+    /// Samples that sound longer than the patch's length extend the render: start crop, length, then the fade.
+    fn sample_end(&self, p: &Params, sr: f64) -> usize {
+        let mut end = 0usize;
+        for k in 0..3 {
+            let b = S1_LVL + 10 * k;
+            let Some(src) = &self.samples[k] else { continue };
+            if p[b] <= -59.0 { continue; }
+            let st = p[b + 1] + if js_round(p[b + 2]) != 0.0 { p[NOTE] - 24.0 } else { 0.0 };
+            let rate = 2f64.powf(st / 12.0);
+            let avail = (src.0.len() as f64 - p[b + 3] * sr / 1000.0) / rate;
+            end = end.max(((p[b + 4] * sr / 1000.0).min(avail) + p[b + 5] * sr / 1000.0).floor() as usize);
+        }
+        end
+    }
+
     // x convolved with the IR `s` describes; IRs and their spectra (per FFT size) are cached
     fn conv(&mut self, s: &IrSpec, x: &[f32], out_len: usize, sr: f64) -> (Buf, Buf) {
         let key = s.key(sr);
@@ -104,11 +119,20 @@ impl Engine {
                     for i in 0..s.min(n) { x[i] = (x[i] as f64 * (0.5 - 0.5 * (PI * i as f64 / s as f64).cos())) as f32; }
                 }
             }
-            let d = (delay * sr / 1000.0).floor() as usize;
+            let d = (delay * sr / 1000.0).floor() as i64;
             if d > 0 {
+                let d = d as usize;
                 for x in [&mut *a, &mut *b] {
                     let mut y = vec![0f32; n];
                     if d < n { y[d..].copy_from_slice(&x[..n - d]); }
+                    *x = y;
+                }
+            } else if d < 0 {
+                // a negative delay crops the layer's start
+                let d = (-d) as usize;
+                for x in [&mut *a, &mut *b] {
+                    let mut y = vec![0f32; n];
+                    if d < n { y[..n - d].copy_from_slice(&x[d..]); }
                     *x = y;
                 }
             }
@@ -153,7 +177,7 @@ impl Engine {
 
     fn render_raw(&mut self, p: &Params, sr: f64) -> (Buf, Buf) {
         let shots = js_round(p[B_SHOTS]).max(1.0) as usize;
-        let shot_len = (p[LEN] * sr / 1000.0).floor() as usize;
+        let shot_len = ((p[LEN] * sr / 1000.0).floor() as usize).max(self.sample_end(p, sr));
         let mut onsets = vec![0f64];
         for s in 1..shots {
             let frac = (s - 1) as f64 / ((shots - 1).max(1)) as f64;
@@ -163,7 +187,8 @@ impl Engine {
         let total = onsets[shots - 1].floor() as usize + shot_len;
         let z = || (vec![0f32; total], vec![0f32; total]);
         // per-layer accumulations across shots, reused from the last render when nothing they read changed
-        let keys: [u64; 8] = std::array::from_fn(|k| key_of(p, &["global", "burst", LAYER_GROUPS[k]], &[if k >= 5 { self.sample_ver[k - 5] } else { 0 }]));
+        // the render length is part of every layer's key: a sample can stretch it
+        let keys: [u64; 8] = std::array::from_fn(|k| key_of(p, &["global", "burst", LAYER_GROUPS[k]], &[if k >= 5 { self.sample_ver[k - 5] } else { 0 }, shot_len as u64]));
         let need: [bool; 8] = std::array::from_fn(|k| self.layer_memo[k].as_ref().map_or(true, |m| m.0 != keys[k]));
         let mut acc: Vec<Stereo> = (0..8).map(|k| if need[k] { z() } else { self.layer_memo[k].as_ref().unwrap().1.clone() }).collect();
         if need.iter().any(|&x| x) {

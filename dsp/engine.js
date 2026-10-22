@@ -178,7 +178,7 @@ export const SPEC = [
   { id: 'spice_len', g: 'spice', label: 'length', min: 5, max: 800, def: 200, scale: 'log', unit: 'ms' },
   { id: 'spice_hp', g: 'spice', label: 'highpass', min: 20, max: 4000, def: 300, scale: 'log', unit: 'Hz' },
   { id: 'spice_key', g: 'spice', label: 'tracking', min: 0, max: 1, def: 0, scale: 'int', unit: 'fixed/key' },
-  { id: 'spice_delay', g: 'spice', label: 'delay', min: 0, max: 500, def: 0, scale: 'lin', unit: 'ms' },
+  { id: 'spice_delay', g: 'spice', label: 'delay', min: -500, max: 500, def: 0, scale: 'lin', unit: 'ms' },
 
   // REVERB — convolver with synthesized IRs
   { id: 'rev_lvl', g: 'rev', label: 'level', min: -60, max: 6, def: -18, unit: 'dB' },
@@ -805,6 +805,17 @@ export function setSample(slot, L, R, rate, sr = SR) {
   SAMPLES[slot] = [a, b];
 }
 export const hasSample = (slot) => !!SAMPLES[slot];
+// samples that sound longer than the patch's length extend the render: start crop, length, then the fade
+function sampleEnd(p, sr) {
+  let end = 0;
+  for (const k of [1, 2, 3]) {
+    const src = SAMPLES[k]; if (!src || p[`s${k}_lvl`] <= -59) continue;
+    const st = p[`s${k}_pitch`] + (Math.round(p[`s${k}_key`]) ? p.note - 24 : 0), rate = Math.pow(2, st / 12);
+    const avail = (src[0].length - p[`s${k}_start`] * sr / 1000) / rate;
+    end = Math.max(end, Math.floor(Math.min(p[`s${k}_len`] * sr / 1000, avail) + p[`s${k}_rel`] * sr / 1000));
+  }
+  return end;
+}
 export function renderSample(p, k, n, sr) {
   const src = SAMPLES[k]; if (!src) return null;
   const st = p[`s${k}_pitch`] + (Math.round(p[`s${k}_key`]) ? p.note - 24 : 0), rate = Math.pow(2, st / 12);
@@ -923,6 +934,8 @@ export function renderShot(p, n, sr = SR) {
   for (const [k, ms] of Object.entries(DLY)) {
     const d = Math.floor(((ms || 0) * sr) / 1000);
     if (d > 0 && layers[k]) layers[k] = layers[k].map((x) => { const y = new Float32Array(n); if (d < n) y.set(x.subarray(0, n - d), d); return y; });
+    // a negative delay crops the layer's start
+    if (d < 0 && layers[k]) layers[k] = layers[k].map((x) => { const y = new Float32Array(n); if (-d < n) y.set(x.subarray(-d, n), 0); return y; });
   }
   const gains = { sub: p.sub_lvl, tr: p.tr_lvl, body: p.body_lvl, spice: p.spice_lvl, synth: p.syn_lvl };
   for (const k in gains) if (layers[k]) { const g = dbToLin(gains[k]); layers[k] = layers[k].map((x) => { const y = x.slice(); for (let i = 0; i < n; i++) y[i] *= g; return y; }); }
@@ -999,7 +1012,7 @@ function renderRaw(params, opts = {}) {
     return renderSnare(p, { ...opts, sr, extra });
   }
   const shots = Math.max(1, Math.round(p.b_shots));
-  const shotLen = Math.floor(p.len * sr / 1000);
+  const shotLen = Math.max(Math.floor(p.len * sr / 1000), sampleEnd(p, sr));
   // shot onsets
   const onsets = [0];
   for (let s = 1; s < shots; s++) {

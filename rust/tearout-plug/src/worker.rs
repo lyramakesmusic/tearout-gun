@@ -36,6 +36,10 @@ pub struct Lane {
 }
 
 pub struct View {
+    /// columns of each lane's spectrogram and waveform, spanning the whole sound
+    pub cols: usize,
+    /// length of the sound, ms
+    pub len_ms: f64,
     pub version: u64,
     pub patch: u64,
     pub p: Params,
@@ -315,7 +319,10 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
 /// Lanes for the view: `mix` as heard, and every layer of the full patch `p` on its own.
 fn build_view(p: &Params, mix: &Sound, eng: &mut [Engine], version: u64) -> View {
     let sr = tearout_dsp::SR;
-    let t1 = (VIEW_MS * sr / 1000.0) as usize;
+    // the lanes span the whole sound, at the resolution of the default view, up to four times as wide
+    let t1 = mix.l.len();
+    let len_ms = t1 as f64 * 1000.0 / sr;
+    let cols = ((SPEC_COLS as f64 * len_ms / VIEW_MS).round() as usize).clamp(SPEC_COLS / 2, SPEC_COLS * 4);
     // stems: each layer soloed (others muted), reverb = mix minus the dry render
     let mut stems: Vec<(&'static str, [u8; 3], f64, Vec<f32>, Vec<f32>)> = Vec::new();
     let (head, last) = eng.split_at_mut(LAYERS.len());
@@ -346,8 +353,8 @@ fn build_view(p: &Params, mix: &Sound, eng: &mut [Engine], version: u64) -> View
             .map(|(name, col, lvl, l, r)| {
                 sc.spawn(move || {
                     let m: Vec<f32> = l.iter().zip(r).map(|(a, b)| 0.5 * (a + b)).collect();
-                    let g = reassigned(&m, sr, t1, SPEC_COLS, SPEC_ROWS, 16);
-                    Lane { name, color: *col, level_db: *lvl, rgba: colorize(&g, *col), wave: wave_cols(l, r, t1, WAVE_COLS), l: Arc::new(l.clone()), r: Arc::new(r.clone()) }
+                    let g = reassigned(&m, sr, t1, cols, SPEC_ROWS, 16);
+                    Lane { name, color: *col, level_db: *lvl, rgba: colorize(&g, *col), wave: wave_cols(l, r, t1, cols), l: Arc::new(l.clone()), r: Arc::new(r.clone()) }
                 })
             })
             .collect();
@@ -357,5 +364,5 @@ fn build_view(p: &Params, mix: &Sound, eng: &mut [Engine], version: u64) -> View
     let m: Vec<f32> = mix.l.iter().zip(&mix.r).map(|(a, b)| 0.5 * (a + b)).collect();
     let raw = crate::analysis::third_oct(&m, sr);
     let tob_max = raw.iter().cloned().fold(f64::MIN, f64::max);
-    View { version, patch: hash(p, false), p: p.clone(), lanes, peak_db: 20.0 * pk.max(1e-9).log10(), tob: raw.map(|v| v - tob_max), tob_max }
+    View { cols, len_ms, version, patch: hash(p, false), p: p.clone(), lanes, peak_db: 20.0 * pk.max(1e-9).log10(), tob: raw.map(|v| v - tob_max), tob_max }
 }

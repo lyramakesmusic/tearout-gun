@@ -104,3 +104,28 @@ pub fn warp(p: (f64, f64)) {
     }
 }
 pub fn show_cursor(on: bool) { unsafe { if on { CGDisplayShowCursor(CGMainDisplayID()) } else { CGDisplayHideCursor(CGMainDisplayID()) }; } }
+
+static PINCH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Watch the app's trackpad pinches (magnify events), summed until `take_pinch`.
+pub fn watch_pinch() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| unsafe {
+        let blk = block::ConcreteBlock::new(|ev: id| -> id {
+            let m: f64 = msg_send![ev, magnification];
+            let mut cur = PINCH.load(std::sync::atomic::Ordering::Relaxed);
+            loop {
+                let next = (f32::from_bits(cur) + m as f32).to_bits();
+                match PINCH.compare_exchange_weak(cur, next, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed) { Ok(_) => break, Err(c) => cur = c }
+            }
+            ev
+        })
+        .copy();
+        // NSEventMaskMagnify
+        let _: id = msg_send![class!(NSEvent), addLocalMonitorForEventsMatchingMask: (1u64 << 30) handler: &*blk];
+        std::mem::forget(blk);
+    });
+}
+
+/// Pinch since the last call (positive spreads the fingers).
+pub fn take_pinch() -> f32 { f32::from_bits(PINCH.swap(0, std::sync::atomic::Ordering::Relaxed)) }
