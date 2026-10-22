@@ -152,6 +152,7 @@ impl<'a> Cx<'a> {
 }
 
 fn frame(ctx: &Context, setter: &ParamSetter, st: &mut Ui, params: &Arc<PlugParams>, sh: &Arc<Shared>) {
+    settle_drags(ctx, setter);
     let v = sh.view_version.load(Ordering::Acquire);
     if v != st.seen {
         if let Some(view) = sh.view.lock().unwrap().clone() {
@@ -521,7 +522,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         for (k, (tag, flags)) in [("M", &cx.sh.mute), ("S", &cx.sh.solo)].into_iter().enumerate() {
             let on = flags.load(Ordering::Relaxed) & (1 << bit) != 0;
             let r = Rect::from_center_size(pos2(25.0, y + h / 2.0 + if k == 0 { -17.0 } else { 0.0 }), vec2(16.0, 15.0));
-            let resp = cx.ui.interact(r, egui::Id::new(("ms", li, k)), Sense::click());
+            let resp = cx.ui.interact(r, egui::Id::new(("ms", ln.name, k)), Sense::click());
             let (fill, fg) = match (on, k) { (true, 0) => (Color32::from_rgb(0x8a, 0x8a, 0x8e), BG), (true, _) => (col, BG), _ => (if resp.hovered() { Color32::from_rgb(0x38, 0x38, 0x3c) } else { TRACK }, DIM) };
             pt.rect_filled(r, CornerRadius::same(3), fill);
             pt.text(r.center(), egui::Align2::CENTER_CENTER, tag, semi(9.0), fg);
@@ -530,7 +531,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     }
     // label
     let lr = Rect::from_min_size(pos2(40.0, y), vec2(78.0, h));
-    if cx.ui.interact(lr, egui::Id::new(("lane", li)), Sense::click()).clicked() { st.sel = li; }
+    if cx.ui.interact(lr, egui::Id::new(("lane", ln.name)), Sense::click()).clicked() { st.sel = li; }
     if let Some(slot) = crate::worker::sample_slot(ln.name) {
         // a sample lane shows its name; click it to rename in place
         let named = cx.p.sample_names.read().map(|n| n[slot - 1].clone()).unwrap_or_default();
@@ -559,9 +560,10 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     let mut lc = DIMMER;
     if let Some(i) = lvl_id {
         let vr = Rect::from_min_size(pos2(if lane_group(ln.name).is_some() { NAME_X - 4.0 } else { 46.0 }, y + h / 2.0 + 1.0), vec2(48.0, 16.0));
-        let resp = cx.ui.interact(vr, egui::Id::new(("lane-lvl", li)), Sense::click_and_drag());
+        let resp = cx.ui.interact(vr, egui::Id::new(("lane-lvl", ln.name)), Sense::click_and_drag());
         let fp = &cx.p.gun.p[i];
-        vertical_drag(cx, &resp, fp);
+        // a lane's level stays audible while dragged (−60 switches the stem off, which hides its lane)
+        vertical_drag(cx, &resp, fp, fp.preview_normalized(-58.0));
         if resp.double_clicked() { cx.setter.begin_set_parameter(fp); cx.setter.set_parameter_normalized(fp, fp.default_normalized_value()); cx.setter.end_set_parameter(fp); }
         if resp.hovered() || resp.dragged() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical); lc = TEXT; }
     }
@@ -588,7 +590,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     }
     if let Some(slot) = crate::worker::sample_slot(ln.name) {
         let xr = Rect::from_center_size(pos2(LANE_X - 14.0, y + h / 2.0 - 7.0), vec2(16.0, 16.0));
-        let resp = cx.ui.interact(xr, egui::Id::new(("unload", li)), Sense::click());
+        let resp = cx.ui.interact(xr, egui::Id::new(("unload", ln.name)), Sense::click());
         let c = if resp.hovered() { BRIGHT } else { Color32::from_rgb(0x55, 0x55, 0x5a) };
         let k = 3.0;
         pt.line_segment([xr.center() - vec2(k, k), xr.center() + vec2(k, k)], Stroke::new(1.3, c));
@@ -600,14 +602,14 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     }
     if let Some(g) = lane_group(ln.name) {
         let lr = Rect::from_center_size(pos2(25.0, y + h / 2.0 + 18.0), vec2(16.0, 16.0));
-        let resp = cx.ui.interact(lr, egui::Id::new(("lock", li)), Sense::click());
+        let resp = cx.ui.interact(lr, egui::Id::new(("lock", ln.name)), Sense::click());
         let on = cx.sh.locked.lock().unwrap().contains(&g);
         if resp.clicked() { let mut l = cx.sh.locked.lock().unwrap(); if on { l.retain(|&x| x != g); } else { l.push(g); } }
         lock_icon(&pt, lr.center(), on, if on { col } else if resp.hovered() { BRIGHT } else { Color32::from_rgb(0x55, 0x55, 0x5a) });
         // this stem's own dice: everything else holds still (a locked stem's dice rest)
         for (k, dy) in [(0usize, -7.0f32), (1, 9.0)] {
             let c = pos2(46.0, y + h / 2.0 + dy);
-            let resp = cx.ui.interact(Rect::from_center_size(c, vec2(14.0, 14.0)), egui::Id::new(("lane-die", li, k)), Sense::click());
+            let resp = cx.ui.interact(Rect::from_center_size(c, vec2(14.0, 14.0)), egui::Id::new(("lane-die", ln.name, k)), Sense::click());
             let tint = if on { Color32::from_rgb(0x2e, 0x2e, 0x32) } else if resp.hovered() { BRIGHT } else { Color32::from_rgb(0x55, 0x55, 0x5a) };
             die_icon(&pt, c, k == 0, tint);
             if resp.clicked() && !on {
@@ -618,7 +620,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     }
     // spectrogram; dragging it takes the lane out as a file (option-drag on the mix takes every stem)
     let r = Rect::from_min_size(pos2(LANE_X, y), vec2(W - 20.0 - LANE_X, h));
-    let sresp = cx.ui.interact(r, egui::Id::new(("lane-drag", li)), Sense::click_and_drag());
+    let sresp = cx.ui.interact(r, egui::Id::new(("lane-drag", ln.name)), Sense::click_and_drag());
     // a click plays the lane: the mix as a note, a stem on its own
     if sresp.clicked() {
         if li == 0 { AUDITION.store(true, Ordering::Relaxed); }
@@ -629,7 +631,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         pt.rect_filled(r, CornerRadius::ZERO, Color32::from_white_alpha(10));
     }
     // a drag-out needs a deliberate pull, so a press that misses a handle by a little stays put
-    let out_id = egui::Id::new(("lane-out", li));
+    let out_id = egui::Id::new(("lane-out", ln.name));
     let pulled = cx.ui.input(|i| i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| a.distance(b) > 14.0));
     let sent = cx.ui.ctx().data(|d| d.get_temp::<bool>(out_id).unwrap_or(false));
     if !sresp.dragged() && sent { cx.ui.ctx().data_mut(|d| d.insert_temp(out_id, false)); }
@@ -972,7 +974,7 @@ fn knob(cx: &mut Cx, id: (usize, usize), fp: &FloatParam, center: Pos2, rad: f32
     pt.add(Shape::line(arc_pts(center, rad, 0.0, 1.0), Stroke::new(w, track)));
     if let Some(s) = range { if s > 0.0 { pt.add(Shape::line(arc_pts(center, rad, u - s, u + s), Stroke::new(w * 2.3, alpha(col, 0.3)))); } }
     pt.add(Shape::line(arc_pts(center, rad, 0.0, u), Stroke::new(w, col)));
-    vertical_drag(cx, &resp, fp);
+    vertical_drag(cx, &resp, fp, 0.0);
     // scrolling over a knob turns it, through the same unstepped value as a drag
     if resp.hovered() && !resp.dragged() {
         let dy = wheel(cx).1;
@@ -1122,11 +1124,25 @@ fn wheel(cx: &Cx) -> (f32, f32) {
 
 /// Vertical drag on `fp` with the cursor pinned; shift is fine. The drag runs on an unstepped value, so stepped
 /// knobs move once the drag crosses a step.
-fn vertical_drag(cx: &mut Cx, resp: &egui::Response, fp: &FloatParam) {
+thread_local! {
+    /// The parameter a drag is editing, so its host gesture closes even if its widget goes away mid-drag.
+    static GESTURE: std::cell::Cell<Option<*const FloatParam>> = const { std::cell::Cell::new(None) };
+}
+
+/// With the button up, a drag still marked open lost its widget: close the gesture and give the cursor back.
+fn settle_drags(ctx: &Context, setter: &ParamSetter) {
+    if ctx.input(|i| i.pointer.any_down()) { return; }
+    // SAFETY: the parameter lives in the editor's `Arc<PlugParams>`, which outlives every frame
+    if let Some(fp) = GESTURE.with(|g| g.take()) { setter.end_set_parameter(unsafe { &*fp }); }
+    crate::grab::end();
+}
+
+fn vertical_drag(cx: &mut Cx, resp: &egui::Response, fp: &FloatParam, floor: f32) {
     let u = fp.unmodulated_normalized_value();
     let raw_id = resp.id.with("raw");
     if resp.drag_started() {
         cx.setter.begin_set_parameter(fp);
+        GESTURE.with(|g| g.set(Some(fp as *const FloatParam)));
         cx.ui.memory_mut(|m| m.data.insert_temp(raw_id, u));
         crate::grab::begin();
     }
@@ -1135,11 +1151,14 @@ fn vertical_drag(cx: &mut Cx, resp: &egui::Response, fp: &FloatParam) {
         let zoom = cx.ui.ctx().zoom_factor();
         let dy = crate::grab::delta().map(|d| d.1 as f32 / zoom).unwrap_or(resp.drag_delta().y);
         let du = -dy / if fine { 1000.0 } else { 200.0 };
-        let raw = (cx.ui.memory(|m| m.data.get_temp::<f32>(raw_id)).unwrap_or(u) + du).clamp(0.0, 1.0);
+        let raw = (cx.ui.memory(|m| m.data.get_temp::<f32>(raw_id)).unwrap_or(u) + du).clamp(floor.min(u), 1.0);
         cx.ui.memory_mut(|m| m.data.insert_temp(raw_id, raw));
         if (raw - u).abs() > 1e-7 { cx.setter.set_parameter_normalized(fp, raw); }
     }
-    if resp.drag_stopped() { cx.setter.end_set_parameter(fp); crate::grab::end(); }
+    if resp.drag_stopped() {
+        if GESTURE.with(|g| g.take()).is_some() { cx.setter.end_set_parameter(fp); }
+        crate::grab::end();
+    }
 }
 
 const CORE: [(usize, &str, Color32); 12] = [
