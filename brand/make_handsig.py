@@ -1,4 +1,4 @@
-# "by lyraaaa", drawn as pen strokes (cubic curves on a baseline at y=100, x-height 72, ascender 22,
+# "lyraaaa", drawn as pen strokes (cubic curves on a baseline at y=100, x-height 72, ascender 22,
 # descender to ~140), stroked with a slanted nib. Writes handsig.svg, handsig.png and handsig.rgba (+ size).
 import pathlib, subprocess
 here = pathlib.Path(__file__).parent
@@ -21,7 +21,7 @@ def r(x):
 
 by = "M0,100 " + b(0) + y(36)
 # lyraaaa, written as one stroke with a long rising tail
-x0 = 74
+x0 = 6
 sig = f"M{x0 - 6},100 " + l(x0) + y(x0 + 20) + r(x0 + 62)
 x = x0 + 86
 for _ in range(4):
@@ -31,7 +31,6 @@ W = x + 62
 def svg(ink, w=2.6):
     return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="-6 10 {W + 12} 140" width="{(W + 12) * 2}" height="280">
 <g fill="none" stroke="{ink}" stroke-linecap="round" stroke-linejoin="round" transform="skewX(-12) translate(18,0)">
-<path d="{by}" stroke-width="{w * 1.1}" transform="translate(14,36) scale(0.64)"/>
 <path d="{sig}" stroke-width="{w}"/>
 <path d="{sig}" stroke-width="{w * 0.45}" transform="translate(0.7,-0.5)"/>
 </g></svg>

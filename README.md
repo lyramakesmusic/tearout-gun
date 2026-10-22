@@ -25,7 +25,37 @@ Presets and randomize anchors come from fitting the engines to real sounds: stag
 
 The snare fit starts from an inverse model (`fit/train_inv2.py`, run in the browser as `web/inv2.onnx`): a CNN that reads a mel spectrogram and a fine pitch spectrum and predicts every knob. It is trained on renders around the fitted library, in a canonical pitch convention (the note is the tone's sounding pitch class), since note and the layer tunings otherwise trade off exactly. The fitter scores each CMA-ES generation in parallel across worker threads when the page is cross-origin isolated (`serve.js` sends the headers; on static hosts `web/coi-sw.js` adds them). Design notes from tutorial research are in `research/*/SYNTHESIS.md`; the experiment narrative is in `research_log.md`. `data/preset_map.json` maps preset names to the gun each was fitted to.
 
-## Running locally
+## Tearout Farm (plugin)
+
+Tearout Farm is the gun engine as a VST3/CLAP instrument (and a standalone app), in Rust (`rust/`). Notes play the patch at their pitch; the editor shows each layer's stem as a spectrogram with its waveform, and any stem drags into the DAW as a WAV. It shares the web app's presets and its fitted randomize and mutate; saved presets and dragged-out stems live in the Tearout Farm folder (Application Support / %APPDATA% / ~/.local/share), which the preset menu shows and can change.
+
+### Building
+
+Install Rust with [rustup](https://rustup.rs), then from `rust/`:
+
+```
+cargo xtask bundle tearout-plug --release            # target/bundled/Tearout Farm.vst3 and .clap
+cargo xtask bundle-universal tearout-plug --release  # macOS: one bundle for Apple silicon and Intel
+cargo run --release --bin tearout-standalone         # the standalone app (computer keyboard: M toggles, A–; play)
+```
+
+On Linux, install the X11/GL development headers first (Debian/Ubuntu: `libx11-dev libx11-xcb-dev libxcb1-dev libxcursor-dev libgl-dev`, plus `libjack-jackd2-dev` for the standalone). For the plugin alone, add `--no-default-features` to the bundle command.
+
+Copy the bundles into your plugin folders:
+
+| | VST3 | CLAP |
+|---|---|---|
+| macOS | `~/Library/Audio/Plug-Ins/VST3/` | `~/Library/Audio/Plug-Ins/CLAP/` |
+| Windows | `C:\Program Files\Common Files\VST3\` | `C:\Program Files\Common Files\CLAP\` |
+| Linux | `~/.vst3/` | `~/.clap/` |
+
+On macOS, a bundle copied from another machine needs its quarantine flag cleared: `xattr -dr com.apple.quarantine "Tearout Farm.vst3"`.
+
+### Release bundle
+
+`rust/scripts/dist.sh` builds one VST3 bundle holding macOS (universal), Windows x64 and Linux x64/arm64 binaries, plus a Nix package (`rust/scripts/linux/flake.nix`, `INSTALL.txt`). It builds macOS locally and the rest on a Linux build host with zig, cargo-zigbuild, cargo-xwin and Ubuntu focal sysroots (set `H=<host>`).
+
+## Running the web app locally
 
 ```
 node serve.js   # http://localhost:8642/web/

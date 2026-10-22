@@ -815,10 +815,10 @@ const SECTIONS: [(&str, &str, Color32, Option<usize>); 10] = [
 ];
 const COLS: [(usize, &[usize]); 7] = [(3, &[0]), (4, &[1]), (6, &[2]), (4, &[3]), (2, &[4, 5]), (3, &[6]), (3, &[7, 8, 9])];
 
-/// The signature in the knobs tab's lower left, with links to GitHub and X.
+/// The signature in the knobs tab's lower left, with links to GitHub and X beside it.
 fn credit(cx: &mut Cx, st: &mut Ui) {
     const SIG: &[u8] = include_bytes!("../assets/credit/handsig.rgba");
-    const SIG_SIZE: [usize; 2] = [692, 280];
+    const SIG_SIZE: [usize; 2] = [556, 280];
     const GH: &[u8] = include_bytes!("../assets/credit/github.rgba");
     const X: &[u8] = include_bytes!("../assets/credit/x.rgba");
     let ctx = cx.ui.ctx().clone();
@@ -834,8 +834,9 @@ fn credit(cx: &mut Cx, st: &mut Ui) {
     let sig = Rect::from_min_size(pos2(6.0, H - h - 4.0), vec2(h * SIG_SIZE[0] as f32 / SIG_SIZE[1] as f32, h));
     pt.image(ids[0], sig, uv, faint);
     let mut x = sig.right() + 4.0;
-    for (k, url) in [(1, "https://github.com/lyramakesmusic"), (2, "https://x.com/_lyraaaa_")] {
-        let r = Rect::from_min_size(pos2(x, sig.bottom() - 19.0), vec2(12.0, 12.0));
+    for (k, url) in [(1, "https://github.com/lyramakesmusic/tearout-gun"), (2, "https://x.com/_lyraaaa_")] {
+        // centred on the writing's x-height band
+        let r = Rect::from_center_size(pos2(x + 6.0, sig.top() + h * 0.54), vec2(12.0, 12.0));
         let resp = cx.ui.interact(r.expand(3.0), egui::Id::new(("credit", k)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
         pt.image(ids[k], r, uv, if resp.hovered() { DIM } else { faint });
         if resp.clicked() { ctx.open_url(egui::OpenUrl::new_tab(url)); }
