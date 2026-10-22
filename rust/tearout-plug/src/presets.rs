@@ -61,7 +61,8 @@ pub fn base_name(n: &str) -> &str {
 
 pub fn index_of(name: &str) -> Option<usize> { all().iter().position(|p| p.name == base_name(name)) }
 
-pub fn default_index() -> usize { index_of("rivet").unwrap_or(0) }
+/// The preset a new instance opens on, as in the web app.
+pub fn default_index() -> usize { index_of("filament").unwrap_or(0) }
 
 /// A preset in the menu: a factory one, or one the user saved (with the samples it layers).
 #[derive(Clone)]
