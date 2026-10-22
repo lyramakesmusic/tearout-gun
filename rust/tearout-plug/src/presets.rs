@@ -10,14 +10,7 @@ pub fn all() -> &'static [Preset] {
     P.get_or_init(|| {
         let j: serde_json::Value = serde_json::from_str(include_str!("../../../web/presets.json")).unwrap_or_default();
         let mut out = Vec::new();
-        // "default": the web app's plain starting patch, in C with its sub on the note
-        let ini: serde_json::Value = serde_json::from_str(include_str!("../../../web/init.json")).unwrap_or_default();
-        let mut p = Params::default();
-        for i in 0..N { if let Some(v) = ini.get(SPEC[i].id).and_then(|v| v.as_f64()) { p.0[i] = v; } }
-        p.0[tearout_dsp::id::B_SHOTS] = p.0[tearout_dsp::id::B_SHOTS].max(1.0);
-        on_c(&mut p);
-        if let Some(t) = crate::roll::sub_on_note(&mut tearout_dsp::Engine::new(), &p) { p.0[tearout_dsp::id::SUB_TUNE] = t; }
-        out.push(Preset { name: "default".into(), p });
+
         for e in j.as_array().into_iter().flatten() {
             let ps = &e["params"];
             if ps.get("engine").and_then(|v| v.as_f64()).unwrap_or(0.0) != 0.0 { continue; }
@@ -29,6 +22,8 @@ pub fn all() -> &'static [Preset] {
             if let Some(t) = measured_tune(&name) { p.0[tearout_dsp::id::SUB_TUNE] = t; }
             out.push(Preset { name, p });
         }
+        // "default" is the sound the web app opens on
+        if let Some(f) = out.iter().find(|x| x.name == "filament").cloned() { out.insert(0, Preset { name: "default".into(), p: f.p }); }
         out
     })
 }
@@ -69,7 +64,7 @@ pub fn base_name(n: &str) -> &str {
 
 pub fn index_of(name: &str) -> Option<usize> { all().iter().position(|p| p.name == base_name(name)) }
 
-/// The preset a new instance opens on: the plain starting patch.
+/// The preset a new instance opens on.
 pub fn default_index() -> usize { index_of("default").unwrap_or(0) }
 
 /// A preset in the menu: a factory one, or one the user saved (with the samples it layers).

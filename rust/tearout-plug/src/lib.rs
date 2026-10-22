@@ -141,6 +141,7 @@ impl Tearout {
 
     fn note_on(&mut self, note: u8, vel: f32) {
         self.shared.last_note.store(note, Ordering::Relaxed);
+        self.shared.notes_seen.fetch_add(1, Ordering::Relaxed);
         let (sound, exact) = {
             let Ok(b) = self.shared.bank.try_lock() else { return };
             let dice = if self.params.dice.value() { b.dice.clone() } else { None };

@@ -9,7 +9,7 @@ H=${H:-gx10-3}
 V=$(grep -m1 '^version' tearout-plug/Cargo.toml | cut -d'"' -f2)
 nice cargo xtask bundle-universal tearout-plug --release >/dev/null
 rsync -az --exclude target ./ $H:tf/rust/
-rsync -az ../web/presets.json ../web/priors.json ../web/gunness.json $H:tf/web/
+rsync -az ../web/presets.json ../web/priors.json ../web/gunness.json ../web/targets.json $H:tf/web/
 ssh $H 'set -e; . ~/.cargo/env; export PATH=~/opt/zig:$PATH CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=symbols PKG_CONFIG_ALLOW_CROSS=1
 cd ~/tf/rust
 rm -f target/*/release/libtearout_plug.so target/*/release/tearout_plug.dll

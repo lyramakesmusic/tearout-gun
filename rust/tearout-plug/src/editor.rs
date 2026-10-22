@@ -56,6 +56,9 @@ struct Ui {
     keys_on: bool,
     keys_oct: i32,
     keys_vel: f32,
+    /// notes seen at the last frame, and when the latest arrived (egui time)
+    notes_seen: u64,
+    note_t: f64,
     /// when the octave last moved (egui time)
     keys_moved: f64,
     /// live output bands (dB re the patch's loudest band) and when they were last updated
@@ -75,7 +78,7 @@ pub fn create(params: Arc<PlugParams>, shared: Arc<Shared>, _notes: Sender<u8>) 
     let list = crate::presets::list();
     let saved = params.preset.read().map(|n| n.clone()).unwrap_or_default();
     let preset = list.iter().position(|e| e.key() == saved).or_else(|| crate::presets::index_of(&saved)).unwrap_or_else(crate::presets::default_index);
-    let st = Ui { tab: Tab::Stems, preset, list, naming: None, view: None, tex: Vec::new(), title: None, credit: None, seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, want_sel: None, editing: None, keys_on: crate::STANDALONE.load(Ordering::Relaxed), keys_oct: 2, keys_vel: 0.8, keys_moved: -10.0, live: [-60.0; crate::analysis::TOB_BANDS], live_t: 0.0, show_spec: true, show_wave: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
+    let st = Ui { tab: Tab::Stems, preset, list, naming: None, view: None, tex: Vec::new(), title: None, credit: None, seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, want_sel: None, editing: None, keys_on: crate::STANDALONE.load(Ordering::Relaxed), keys_oct: 2, keys_vel: 0.8, keys_moved: -10.0, notes_seen: 0, note_t: -10.0, live: [-60.0; crate::analysis::TOB_BANDS], live_t: 0.0, show_spec: true, show_wave: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
     let p2 = params.clone();
     params.editor_state.set_host_resizable(fit_size);
     create_egui_editor(params.editor_state.clone(), st, |ctx, _| setup(ctx), move |ctx, setter, st| frame(ctx, setter, st, &p2, &shared))
@@ -352,6 +355,14 @@ fn header(cx: &mut Cx, st: &mut Ui) {
         }
         rx -= 28.0 + 10.0;
     }
+    // lights as notes arrive
+    let now = cx.ui.input(|i| i.time);
+    let seen = cx.sh.notes_seen.load(Ordering::Relaxed);
+    if seen != st.notes_seen { st.notes_seen = seen; st.note_t = now; }
+    let glow = (1.0 - ((now - st.note_t) / 0.35) as f32).clamp(0.0, 1.0);
+    pt.circle_filled(pos2(rx - 4.0, y), 3.0, Color32::from_rgb(0x2e, 0x2e, 0x31).lerp_to_gamma(Color32::from_rgb(0x7c, 0xd9, 0x7a), glow));
+    if glow > 0.0 { cx.ui.ctx().request_repaint(); }
+    rx -= 16.0;
     let note = note_name(cx.gun(NOTE));
     let nw = cx.text_w(&note, mono(12.0));
     cx.text(pos2(rx, y), egui::Align2::RIGHT_CENTER, &note, mono(12.0), DIM);
