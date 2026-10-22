@@ -396,6 +396,12 @@ where
             window.set_mouse_cursor(cursor_icon);
         }
 
+        // a focused text field takes the keyboard from the host
+        #[cfg(not(target_os = "macos"))]
+        if self.egui_ctx.wants_keyboard_input() && !window.has_focus() {
+            window.focus();
+        }
+
         // A temporary workaround for keyboard input not working sometimes in Windows.
         // See https://github.com/BillyDM/egui-baseview/issues/20
         #[cfg(feature = "windows_keyboard_workaround")]
