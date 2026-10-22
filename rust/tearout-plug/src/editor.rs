@@ -615,7 +615,13 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         cx.ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         pt.rect_filled(r, CornerRadius::ZERO, Color32::from_white_alpha(10));
     }
-    if sresp.drag_started() {
+    // a drag-out needs a deliberate pull, so a press that misses a handle by a little stays put
+    let out_id = egui::Id::new(("lane-out", li));
+    let pulled = cx.ui.input(|i| i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| a.distance(b) > 14.0));
+    let sent = cx.ui.ctx().data(|d| d.get_temp::<bool>(out_id).unwrap_or(false));
+    if !sresp.dragged() && sent { cx.ui.ctx().data_mut(|d| d.insert_temp(out_id, false)); }
+    if sresp.dragged() && pulled && !sent {
+        cx.ui.ctx().data_mut(|d| d.insert_temp(out_id, true));
         let all = li == 0 && cx.ui.input(|i| i.modifiers.alt);
         let pick: Vec<usize> = if all { (1..view.lanes.len()).collect() } else { vec![li] };
         drag_out(st, view, &pick);
