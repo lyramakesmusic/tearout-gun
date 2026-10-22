@@ -618,15 +618,14 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     }
     if !st.show_wave {
         if !st.show_spec {
-            // with both views off, the lane keeps a faint grey outline of its sound
-            let nall = ln.wave.len();
-            let (c0, c1) = (((u0 * nall as f32) as usize).min(nall), ((u1 * nall as f32).ceil() as usize).min(nall));
-            let colw = r.width() / ((u1 - u0) * nall as f32);
-            let (cy, a) = (r.center().y, r.height() * 0.46);
-            for (k, &(hi, lo)) in ln.wave[c0..c1].iter().enumerate() {
-                let x = r.left() + ((c0 + k) as f32 - u0 * nall as f32) * colw;
-                pt.rect_filled(Rect::from_min_max(pos2(x, cy - hi * a), pos2(x + colw, (cy - lo * a).max(cy - hi * a + 0.5))), CornerRadius::ZERO, Color32::from_white_alpha(9));
-            }
+            // with both views off the lane is a placeholder: a dotted centre line and the layer's name
+            let cy = r.center().y;
+            pt.extend(Shape::dashed_line(&[pos2(r.left(), cy), pos2(r.right(), cy)], Stroke::new(1.0, Color32::from_rgb(0x24, 0x24, 0x27)), 2.0, 5.0));
+            let label = if li == 0 { "mix" } else { ln.name };
+            let g = pt.layout_no_wrap(label.to_string(), sans(13.0), Color32::from_rgb(0x3c, 0x3c, 0x40));
+            let br = Rect::from_center_size(r.center(), g.size() + vec2(16.0, 4.0));
+            pt.rect_filled(br, CornerRadius::ZERO, BG);
+            pt.galley(br.center() - g.size() / 2.0, g, Color32::from_rgb(0x3c, 0x3c, 0x40));
         }
         if st.show_handles { lane_overlays(cx, ln.name, r, col, sounding(ln)); }
         return;
