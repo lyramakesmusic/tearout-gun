@@ -563,7 +563,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
         let resp = cx.ui.interact(vr, egui::Id::new(("lane-lvl", ln.name)), Sense::click_and_drag());
         let fp = &cx.p.gun.p[i];
         // a lane's level stays audible while dragged (−60 switches the stem off, which hides its lane)
-        vertical_drag(cx, &resp, fp, fp.preview_normalized(-58.0));
+        vertical_drag(cx, &resp, fp, to_norm(&SPEC[i], -58.0) as f32);
         if resp.double_clicked() { cx.setter.begin_set_parameter(fp); cx.setter.set_parameter_normalized(fp, fp.default_normalized_value()); cx.setter.end_set_parameter(fp); }
         if resp.hovered() || resp.dragged() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical); lc = TEXT; }
     }
