@@ -4,13 +4,45 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use windows_sys::core::GUID;
 use windows_sys::Win32::Foundation::{HWND, POINT};
 use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
-use windows_sys::Win32::System::Ole::{OleInitialize, OleUninitialize, DROPEFFECT_COPY};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetCapture, ReleaseCapture};
+use windows_sys::Win32::Foundation::{BOOL, DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, E_NOINTERFACE, S_OK};
+use windows_sys::Win32::System::Ole::{DoDragDrop, OleInitialize, OleUninitialize, DROPEFFECT_COPY};
+use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, GetCapture, VK_LBUTTON};
 use windows_sys::Win32::UI::Shell::Common::ITEMIDLIST;
-use windows_sys::Win32::UI::Shell::{ILCreateFromPathW, ILFindLastID, ILFree, SHCreateDataObject, SHDoDragDrop};
+use windows_sys::Win32::UI::Shell::{ILCreateFromPathW, ILFindLastID, ILFree, SHCreateDataObject};
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, PostMessageW, SetCursorPos, ShowCursor, WM_LBUTTONUP};
 
 const IID_IDATAOBJECT: GUID = GUID { data1: 0x0000010e, data2: 0, data3: 0, data4: [0xc0, 0, 0, 0, 0, 0, 0, 0x46] };
+
+const IID_IUNKNOWN: GUID = GUID { data1: 0, data2: 0, data3: 0, data4: [0xc0, 0, 0, 0, 0, 0, 0, 0x46] };
+const IID_IDROPSOURCE: GUID = GUID { data1: 0x00000121, data2: 0, data3: 0, data4: [0xc0, 0, 0, 0, 0, 0, 0, 0x46] };
+
+/// The drag's IDropSource. It reads the physical button, since the drag thread's own key state never saw
+/// the press. It lives on the drag thread's stack for the length of `DoDragDrop`.
+#[repr(C)]
+struct DropSource { vtbl: *const DropSourceVtbl }
+
+#[repr(C)]
+struct DropSourceVtbl {
+    query_interface: unsafe extern "system" fn(*mut DropSource, *const GUID, *mut *mut core::ffi::c_void) -> i32,
+    add_ref: unsafe extern "system" fn(*mut DropSource) -> u32,
+    release: unsafe extern "system" fn(*mut DropSource) -> u32,
+    query_continue_drag: unsafe extern "system" fn(*mut DropSource, BOOL, u32) -> i32,
+    give_feedback: unsafe extern "system" fn(*mut DropSource, u32) -> i32,
+}
+
+static DROP_SOURCE_VTBL: DropSourceVtbl = DropSourceVtbl { query_interface: ds_query, add_ref: ds_ref, release: ds_ref, query_continue_drag: ds_continue, give_feedback: ds_feedback };
+
+fn same_guid(a: &GUID, b: &GUID) -> bool { a.data1 == b.data1 && a.data2 == b.data2 && a.data3 == b.data3 && a.data4 == b.data4 }
+
+unsafe extern "system" fn ds_query(this: *mut DropSource, iid: *const GUID, out: *mut *mut core::ffi::c_void) -> i32 {
+    if same_guid(&*iid, &IID_IUNKNOWN) || same_guid(&*iid, &IID_IDROPSOURCE) { *out = this as *mut core::ffi::c_void; S_OK } else { *out = std::ptr::null_mut(); E_NOINTERFACE }
+}
+unsafe extern "system" fn ds_ref(_: *mut DropSource) -> u32 { 1 }
+unsafe extern "system" fn ds_continue(_: *mut DropSource, escape: BOOL, _keys: u32) -> i32 {
+    if escape != 0 { DRAGDROP_S_CANCEL } else if GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000 == 0 { DRAGDROP_S_DROP } else { S_OK }
+}
+unsafe extern "system" fn ds_feedback(_: *mut DropSource, _: u32) -> i32 { DRAGDROP_S_USEDEFAULTCURSORS }
 
 /// A drag is in flight; one runs at a time.
 static DRAGGING: AtomicBool = AtomicBool::new(false);
@@ -24,11 +56,15 @@ fn wide(p: &std::path::Path) -> Vec<u16> {
 /// host's UI thread stays free to take the drop.
 pub fn drag_files(paths: &[PathBuf]) -> bool {
     if paths.is_empty() || DRAGGING.swap(true, Ordering::AcqRel) { return false; }
-    // the drag thread takes the mouse from here on
-    let owner = unsafe { let o = GetCapture(); ReleaseCapture(); o } as isize;
+    let owner = unsafe { GetCapture() } as isize;
+    let ui = unsafe { GetCurrentThreadId() };
     let paths = paths.to_vec();
     let spawned = std::thread::Builder::new().name("tearout-drag".into()).spawn(move || {
+        // sharing the UI thread's input state gives the drag the held button and the mouse capture
+        let me = unsafe { GetCurrentThreadId() };
+        let attached = unsafe { AttachThreadInput(me, ui, 1) } != 0;
         unsafe { run(&paths, owner as HWND) };
+        if attached { unsafe { AttachThreadInput(me, ui, 0) }; }
         DRAGGING.store(false, Ordering::Release);
     });
     if spawned.is_err() { DRAGGING.store(false, Ordering::Release); }
@@ -45,7 +81,9 @@ unsafe fn run(paths: &[PathBuf], owner: HWND) {
         let mut obj: *mut core::ffi::c_void = std::ptr::null_mut();
         if !kids.is_empty() && SHCreateDataObject(folder, kids.len() as u32, kids.as_ptr(), std::ptr::null_mut(), &IID_IDATAOBJECT, &mut obj) >= 0 && !obj.is_null() {
             let mut effect = 0;
-            SHDoDragDrop(std::ptr::null_mut(), obj, std::ptr::null_mut(), DROPEFFECT_COPY, &mut effect);
+            let mut src = DropSource { vtbl: &DROP_SOURCE_VTBL };
+            let hr = DoDragDrop(obj, &mut src as *mut DropSource as *mut core::ffi::c_void, DROPEFFECT_COPY, &mut effect);
+            nih_plug::nih_log!("drag out ended: hr {hr:#x}, effect {effect}");
             // IUnknown::Release
             let vt = *(obj as *const *const [usize; 3]);
             let release: unsafe extern "system" fn(*mut core::ffi::c_void) -> u32 = std::mem::transmute((*vt)[2]);
