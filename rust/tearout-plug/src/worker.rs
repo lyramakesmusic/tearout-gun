@@ -294,6 +294,7 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
         if params.dice.value() && sh.dice_used.swap(false, Ordering::Relaxed) {
             let locked = sh.locked.lock().unwrap().clone();
             let mut q = crate::roll::keep(&p, roll(&p, params.dice_amt.value() as f64, &mut rng), &locked);
+            crate::roll::hold_stems(&p, &mut q);
             q.0[NOTE] = fold_note(sh.last_note.load(Ordering::Relaxed));
             let o = other.render(&q);
             sh.bank.lock().unwrap().dice = Some(Arc::new(Sound { l: o.l, r: o.r, note: q.0[NOTE] }));

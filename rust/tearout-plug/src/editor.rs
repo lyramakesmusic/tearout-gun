@@ -1485,6 +1485,8 @@ fn reroll(cx: &mut Cx, st: &mut Ui, randomize: bool, locked: &[&'static str]) {
     };
     // locked stems hold what they sound like now, whatever the mutation started from
     let mut q = crate::roll::keep(&cur, q, locked);
+    // a mutation nudges the stems that are playing; only a randomize switches stems on or off
+    if !randomize { crate::roll::hold_stems(&cur, &mut q); }
     q.0[NOTE] = cur.0[NOTE];
     apply(cx, &q);
     if !randomize { st.last_mutation = Some(q); }

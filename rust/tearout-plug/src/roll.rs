@@ -242,6 +242,13 @@ pub fn lock_penalty(x: &[f32]) -> f64 {
 #[derive(Clone, Copy, PartialEq)]
 pub enum Mode { Randomize, Mutate }
 
+/// Put back any stem whose on/off state differs between `p` and `q` (a level at or under -59 dB is off).
+pub fn hold_stems(p: &Params, q: &mut Params) {
+    for l in [SUB_LVL, TR_LVL, BODY_LVL, SYN_LVL, SPICE_LVL, REV_LVL, S1_LVL, S1_LVL + 10, S1_LVL + 20] {
+        if (q.0[l] > -59.0) != (p.0[l] > -59.0) { q.0[l] = p.0[l]; }
+    }
+}
+
 /// Best of `k` candidates per thread over `threads` threads; lower score is more gun-like. Knobs in the
 /// `locked` groups stay as they are in `p`.
 pub fn roll(mode: Mode, p: &Params, seed: f64, threads: usize, k: usize, locked: &[&str]) -> Params {
