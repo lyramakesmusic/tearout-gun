@@ -122,6 +122,12 @@ pub fn list() -> Vec<Entry> {
     out
 }
 
+/// Whether saving as `name` would replace a saved preset other than `current` (the loaded user preset's name).
+pub fn taken(name: &str, current: Option<&str>) -> bool {
+    let f = file_name(name).to_lowercase();
+    current.map_or(true, |c| file_name(c).to_lowercase() != f) && user_dir().join(file_name(name)).exists()
+}
+
 /// Save (or overwrite) a user preset.
 pub fn save(name: &str, p: &Params, samples: &[String; 3]) -> std::io::Result<()> {
     let d = user_dir();

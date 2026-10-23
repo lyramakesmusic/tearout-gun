@@ -284,17 +284,28 @@ fn header(cx: &mut Cx, st: &mut Ui) {
     let name = st.list.get(st.preset).map(|p| p.name.clone()).unwrap_or_default();
     let nw = cx.text_w(&name, semi(13.0)).max(70.0);
     let nr = Rect::from_min_size(pos2(x - 4.0, 8.0), vec2(nw + 8.0, 24.0));
+    // a name that would replace another saved preset asks first: enter again replaces it
+    let ask_id = egui::Id::new("save-replace");
+    let asking = cx.ui.ctx().data(|d| d.get_temp::<String>(ask_id)).filter(|a| st.naming.as_ref().is_some_and(|b| b.trim() == a));
+    let ask_w = if asking.is_some() { cx.text_w("replace?", sans(11.0)) + 10.0 } else { 0.0 };
     if let Some(buf) = st.naming.as_mut() {
         // naming a preset to save: enter saves, escape leaves it
-        let er = Rect::from_min_size(pos2(x - 4.0, 8.0), vec2(nw.max(120.0) + 8.0, 24.0));
+        let er = Rect::from_min_size(pos2(x - 4.0, 8.0), vec2(nw.max(120.0) + 8.0 + ask_w, 24.0));
         cx.ui.painter().rect_filled(er, CornerRadius::same(3), TRACK);
-        let resp = cx.ui.put(er.shrink2(vec2(4.0, 3.0)), egui::TextEdit::singleline(buf).font(semi(13.0)).frame(false).text_color(BRIGHT).desired_width(er.width() - 8.0));
+        let resp = cx.ui.put(Rect::from_min_max(er.min + vec2(4.0, 3.0), er.max - vec2(4.0 + ask_w, 3.0)), egui::TextEdit::singleline(buf).font(semi(13.0)).frame(false).text_color(BRIGHT).desired_width(er.width() - 8.0 - ask_w));
+        if asking.is_some() { cx.text(pos2(er.max.x - 6.0, y), egui::Align2::RIGHT_CENTER, "replace?", sans(11.0), BRIGHT); }
         if !resp.has_focus() && !resp.lost_focus() { resp.request_focus(); }
         if resp.lost_focus() {
             let cancel = cx.ui.input(|i| i.key_pressed(egui::Key::Escape));
             let name = buf.trim().to_string();
-            st.naming = None;
-            if !cancel && !name.is_empty() { save_preset(cx, st, &name); }
+            let current = st.list.get(st.preset).filter(|e| e.user).map(|e| e.name.clone());
+            if !cancel && !name.is_empty() && asking.as_deref() != Some(name.as_str()) && crate::presets::taken(&name, current.as_deref()) {
+                cx.ui.ctx().data_mut(|d| d.insert_temp(ask_id, name));
+            } else {
+                st.naming = None;
+                cx.ui.ctx().data_mut(|d| d.remove::<String>(ask_id));
+                if !cancel && !name.is_empty() { save_preset(cx, st, &name); }
+            }
         }
     } else {
         let nresp = cx.ui.interact(nr, egui::Id::new("preset-name"), Sense::click());
@@ -305,7 +316,7 @@ fn header(cx: &mut Cx, st: &mut Ui) {
             cx.text(pos2(x + cx.text_w(&name, semi(13.0)) + 4.0, y - 1.0), egui::Align2::LEFT_CENTER, "•", semi(13.0), DIM);
         }
     }
-    x += nw.max(if st.naming.is_some() { 120.0 } else { 0.0 }) + 6.0;
+    x += nw.max(if st.naming.is_some() { 120.0 } else { 0.0 }) + ask_w + 6.0;
     if cx.button(Rect::from_min_size(pos2(x - 4.0, 8.0), vec2(16.0, 24.0)), "next", "›", Color32::TRANSPARENT, DIM, sans(16.0)) { load_preset(cx, st, (st.preset + 1) % n); }
     x += 18.0;
     // save: a floppy disk
