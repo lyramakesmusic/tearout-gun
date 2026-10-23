@@ -110,6 +110,12 @@ impl<'a> Window<'a> {
         self.window.focus()
     }
 
+    /// While on, keys typed in the host go to this window first (Windows).
+    pub fn capture_keys(&mut self, _on: bool) {
+        #[cfg(target_os = "windows")]
+        self.window.capture_keys(_on);
+    }
+
     /// Hand the keyboard back to whatever had it before [`Window::focus`] (Windows).
     pub fn release_focus(&mut self) {
         #[cfg(target_os = "windows")]

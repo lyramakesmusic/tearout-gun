@@ -408,6 +408,9 @@ where
             } else if !typing && self.borrowed_keys {
                 window.release_focus();
             }
+            if typing != self.borrowed_keys {
+                window.capture_keys(typing);
+            }
             self.borrowed_keys = typing;
         }
 

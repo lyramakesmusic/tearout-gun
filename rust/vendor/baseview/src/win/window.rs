@@ -66,6 +66,62 @@ unsafe fn generate_guid() -> String {
 
 const WIN_FRAME_TIMER: usize = 4242;
 
+// Key messages on the UI thread go straight to the window that is capturing keys (a text field
+// being edited), ahead of the host's own shortcut handling. The hook is shared by every window
+// on the thread, the way JUCE does it.
+thread_local! {
+    static KEY_HOOK: Cell<winapi::shared::windef::HHOOK> = Cell::new(null_mut());
+    static KEY_HOOK_USERS: Cell<u32> = Cell::new(0);
+    static KEY_TARGET: Cell<HWND> = Cell::new(null_mut());
+}
+
+unsafe extern "system" fn key_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    use winapi::um::winuser::{CallNextHookEx, HC_ACTION, PM_REMOVE};
+    let target = KEY_TARGET.with(|t| t.get());
+    if code == HC_ACTION && wparam == PM_REMOVE as WPARAM && !target.is_null() {
+        let msg = &mut *(lparam as *mut MSG);
+        use winapi::um::winuser::{GetAncestor, GA_ROOT};
+        let same_window = !msg.hwnd.is_null() && GetAncestor(msg.hwnd, GA_ROOT) == GetAncestor(target, GA_ROOT);
+        if same_window && matches!(msg.message, WM_KEYDOWN | WM_KEYUP | WM_CHAR) {
+            msg.hwnd = target;
+            if msg.message == WM_KEYDOWN {
+                TranslateMessage(msg);
+            }
+            DispatchMessageW(msg);
+            *msg = std::mem::zeroed();
+            msg.message = WM_USER;
+            return 0;
+        }
+    }
+    CallNextHookEx(KEY_HOOK.with(|h| h.get()), code, wparam, lparam)
+}
+
+unsafe fn hook_keys() {
+    if KEY_HOOK_USERS.with(|n| n.replace(n.get() + 1)) == 0 {
+        let hook = winapi::um::winuser::SetWindowsHookExW(
+            winapi::um::winuser::WH_GETMESSAGE,
+            Some(key_hook),
+            null_mut(),
+            winapi::um::processthreadsapi::GetCurrentThreadId(),
+        );
+        KEY_HOOK.with(|h| h.set(hook));
+    }
+}
+
+unsafe fn unhook_keys(hwnd: HWND) {
+    KEY_TARGET.with(|t| {
+        if t.get() == hwnd {
+            t.set(null_mut())
+        }
+    });
+    if KEY_HOOK_USERS.with(|n| n.replace(n.get().saturating_sub(1))) == 1 {
+        let hook = KEY_HOOK.with(|h| h.replace(null_mut()));
+        if !hook.is_null() {
+            winapi::um::winuser::UnhookWindowsHookEx(hook);
+        }
+    }
+}
+
 pub struct WindowHandle {
     hwnd: Option<HWND>,
     is_open: Rc<Cell<bool>>,
@@ -147,6 +203,7 @@ unsafe extern "system" fn wnd_proc(
 
         // NOTE: This is not handled in `wnd_proc_inner` because of the deferred task loop above
         if msg == WM_NCDESTROY {
+            unhook_keys(hwnd);
             RevokeDragDrop(hwnd);
             unregister_wnd_class((*window_state_ptr).window_class);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
@@ -776,6 +833,7 @@ impl Window<'_> {
 
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, Rc::into_raw(window_state) as *const _ as _);
             SetTimer(hwnd, WIN_FRAME_TIMER, 15, None);
+            hook_keys();
 
             if let Some(mut new_rect) = new_rect {
                 // Convert this desired"client rectangle" size to the actual "window rectangle"
@@ -818,6 +876,18 @@ impl Window<'_> {
             }
             SetFocus(self.state.hwnd);
         }
+    }
+
+    /// While on, every key typed on this thread goes to this window before the host sees it.
+    pub fn capture_keys(&mut self, on: bool) {
+        let hwnd = self.state.hwnd;
+        KEY_TARGET.with(|t| {
+            if on {
+                t.set(hwnd)
+            } else if t.get() == hwnd {
+                t.set(null_mut())
+            }
+        });
     }
 
     /// Hand the keyboard back to the window that had it before `focus`.
