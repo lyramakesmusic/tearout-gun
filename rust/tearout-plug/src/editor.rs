@@ -614,7 +614,7 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
             die_icon(&pt, c, k == 0, tint);
             if resp.clicked() && !on {
                 let others: Vec<&'static str> = SPEC.iter().map(|s| s.group).filter(|&x| x != g).fold(Vec::new(), |mut v, x| { if !v.contains(&x) { v.push(x); } v });
-                reroll(cx, st, k == 0, &others);
+                reroll(cx, st, k == 0, &others, true);
             }
         }
     }
@@ -1462,13 +1462,13 @@ fn strip_buttons(cx: &mut Cx, st: &mut Ui) {
         cx.text(pos2(c.x, c.y + 42.0), egui::Align2::CENTER_CENTER, name, sans(10.0), Color32::from_rgb(0x7a, 0x7a, 0x7c));
         if resp.clicked() {
             let locked = cx.sh.locked.lock().unwrap().clone();
-            reroll(cx, st, k == 0, &locked);
+            reroll(cx, st, k == 0, &locked, k != 0);
         }
     }
 }
 
-/// Randomize (or mutate) every knob outside the `locked` groups.
-fn reroll(cx: &mut Cx, st: &mut Ui, randomize: bool, locked: &[&'static str]) {
+/// Randomize (or mutate) every knob outside the `locked` groups; `hold` keeps every stem on or off as it is.
+fn reroll(cx: &mut Cx, st: &mut Ui, randomize: bool, locked: &[&'static str], hold: bool) {
     let cur = cx.p.gun.snapshot();
     let seed = 1.0 + (st.rng.next() * 1e6).floor();
     let q = if randomize {
@@ -1485,8 +1485,8 @@ fn reroll(cx: &mut Cx, st: &mut Ui, randomize: bool, locked: &[&'static str]) {
     };
     // locked stems hold what they sound like now, whatever the mutation started from
     let mut q = crate::roll::keep(&cur, q, locked);
-    // a mutation nudges the stems that are playing; only a randomize switches stems on or off
-    if !randomize { crate::roll::hold_stems(&cur, &mut q); }
+    // a mutation or a single stem's die nudges the stems that are playing; only the full randomize switches stems on or off
+    if hold { crate::roll::hold_stems(&cur, &mut q); }
     q.0[NOTE] = cur.0[NOTE];
     apply(cx, &q);
     if !randomize { st.last_mutation = Some(q); }
