@@ -96,7 +96,21 @@ pub fn create(params: Arc<PlugParams>, shared: Arc<Shared>, _notes: Sender<u8>) 
     let st = Ui { tab: Tab::Stems, preset, list, naming: None, view: None, tex: Vec::new(), title: None, ztex: Vec::new(), zoom: None, credit: None, seen: 0, sel: 3, mem: [0.8; 8], presets_open: false, anchor: None, last_mutation: None, want_sel: None, editing: None, keys_on: crate::STANDALONE.load(Ordering::Relaxed), keys_oct: 2, keys_vel: 0.8, keys_moved: -10.0, notes_seen: 0, note_t: -10.0, live: [-60.0; crate::analysis::TOB_BANDS], live_t: 0.0, header_x: 400.0, renaming: None, t0: 0.0, span: VIEW_MS, lane_scroll: 0.0, show_spec: true, show_wave: true, show_handles: true, rng: tearout_dsp::dsp::Rng::new((std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7) % 9973) as f64 + 1.0) };
     let p2 = params.clone();
     params.editor_state.set_host_resizable(fit_size);
-    create_egui_editor(params.editor_state.clone(), st, |ctx, _| setup(ctx), move |ctx, setter, st| frame(ctx, setter, st, &p2, &shared))
+    create_egui_editor(params.editor_state.clone(), st, |ctx, st| { setup(ctx); st.reopen(); }, move |ctx, setter, st| frame(ctx, setter, st, &p2, &shared))
+}
+
+impl Ui {
+    /// A newly opened window has its own texture store: everything drawn from a texture loads again.
+    fn reopen(&mut self) {
+        self.tex.clear();
+        self.title = None;
+        self.ztex.clear();
+        self.zoom = None;
+        self.credit = None;
+        self.seen = u64::MAX;
+        #[cfg(windows)]
+        crate::win::warm_shell();
+    }
 }
 
 fn setup(ctx: &Context) {

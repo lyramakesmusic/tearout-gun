@@ -60,18 +60,41 @@ pub fn drag_files(paths: &[PathBuf]) -> bool {
     let ui = unsafe { GetCurrentThreadId() };
     let paths = paths.to_vec();
     let spawned = std::thread::Builder::new().name("tearout-drag".into()).spawn(move || {
-        // sharing the UI thread's input state gives the drag the held button and the mouse capture
-        let me = unsafe { GetCurrentThreadId() };
-        let attached = unsafe { AttachThreadInput(me, ui, 1) } != 0;
-        unsafe { run(&paths, owner as HWND) };
-        if attached { unsafe { AttachThreadInput(me, ui, 0) }; }
+        unsafe { run(&paths, owner as HWND, ui) };
         DRAGGING.store(false, Ordering::Release);
     });
     if spawned.is_err() { DRAGGING.store(false, Ordering::Release); }
     spawned.is_ok()
 }
 
-unsafe fn run(paths: &[PathBuf], owner: HWND) {
+/// Load the shell's drag-and-drop machinery once in the background, so the first drag starts at once.
+pub fn warm_shell() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = std::thread::Builder::new().name("tearout-shell".into()).spawn(|| unsafe {
+            let dir = crate::export::dir();
+            let _ = std::fs::create_dir_all(&dir);
+            let Some(parent) = dir.parent() else { return };
+            let ole = OleInitialize(std::ptr::null_mut()) >= 0;
+            let folder = ILCreateFromPathW(wide(parent).as_ptr());
+            let item = ILCreateFromPathW(wide(&dir).as_ptr());
+            if !folder.is_null() && !item.is_null() {
+                let kids = [ILFindLastID(item) as *const ITEMIDLIST];
+                let mut obj: *mut core::ffi::c_void = std::ptr::null_mut();
+                if SHCreateDataObject(folder, 1, kids.as_ptr(), std::ptr::null_mut(), &IID_IDATAOBJECT, &mut obj) >= 0 && !obj.is_null() {
+                    let vt = *(obj as *const *const [usize; 3]);
+                    let release: unsafe extern "system" fn(*mut core::ffi::c_void) -> u32 = std::mem::transmute((*vt)[2]);
+                    release(obj);
+                }
+            }
+            if !item.is_null() { ILFree(item); }
+            if !folder.is_null() { ILFree(folder); }
+            if ole { OleUninitialize(); }
+        });
+    });
+}
+
+unsafe fn run(paths: &[PathBuf], owner: HWND, ui: u32) {
     let Some(dir) = paths[0].parent() else { return };
     let ole = OleInitialize(std::ptr::null_mut()) >= 0;
     let folder = ILCreateFromPathW(wide(dir).as_ptr());
@@ -82,7 +105,11 @@ unsafe fn run(paths: &[PathBuf], owner: HWND) {
         if !kids.is_empty() && SHCreateDataObject(folder, kids.len() as u32, kids.as_ptr(), std::ptr::null_mut(), &IID_IDATAOBJECT, &mut obj) >= 0 && !obj.is_null() {
             let mut effect = 0;
             let mut src = DropSource { vtbl: &DROP_SOURCE_VTBL };
+            // sharing the UI thread's input state for the drag itself gives it the held button and the mouse capture
+            let me = GetCurrentThreadId();
+            let attached = AttachThreadInput(me, ui, 1) != 0;
             let hr = DoDragDrop(obj, &mut src as *mut DropSource as *mut core::ffi::c_void, DROPEFFECT_COPY, &mut effect);
+            if attached { AttachThreadInput(me, ui, 0); }
             nih_plug::nih_log!("drag out ended: hr {hr:#x}, effect {effect}");
             // IUnknown::Release
             let vt = *(obj as *const *const [usize; 3]);
