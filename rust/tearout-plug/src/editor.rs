@@ -1471,16 +1471,23 @@ fn strip_buttons(cx: &mut Cx, st: &mut Ui) {
 fn reroll(cx: &mut Cx, st: &mut Ui, randomize: bool, locked: &[&'static str]) {
     let cur = cx.p.gun.snapshot();
     let seed = 1.0 + (st.rng.next() * 1e6).floor();
-    let mut q = if randomize {
+    let q = if randomize {
+        // a fresh sound is the next mutation's starting point
+        st.anchor = None;
+        st.last_mutation = None;
         crate::roll::roll(crate::roll::Mode::Randomize, &cur, seed, 4, 2, locked)
     } else {
         // mutations stay around the patch they started from until something else changes it
         if st.last_mutation.as_ref().map_or(true, |m| !same(m, &cur)) { st.anchor = Some(cur.clone()); }
-        crate::roll::roll(crate::roll::Mode::Mutate, st.anchor.as_ref().unwrap_or(&cur), seed, 4, 2, locked)
+        let q = crate::roll::roll(crate::roll::Mode::Mutate, st.anchor.as_ref().unwrap_or(&cur), seed, 4, 2, locked);
+        st.last_mutation = Some(q.clone());
+        q
     };
+    // locked stems hold what they sound like now, whatever the mutation started from
+    let mut q = crate::roll::keep(&cur, q, locked);
     q.0[NOTE] = cur.0[NOTE];
     apply(cx, &q);
-    st.last_mutation = Some(q);
+    if !randomize { st.last_mutation = Some(q); }
 }
 
 /// A small die: five pips rolls fresh, two pips mutates.
