@@ -2,7 +2,11 @@
 
 A browser synth for tearout guns, snares, chugs and pings. Everything renders offline in Web Workers, so randomize, mutate, stems and reference fitting all run on the page with no server.
 
-**[Open it](https://lyramakesmusic.github.io/tearout-gun/)**
+![screenshot of tearout farm as a vst3](tearoutfarm.png)
+
+**[Open it in web](https://lyramakesmusic.github.io/tearout-gun/)**
+
+**[Download it as vst3](https://github.com/lyramakesmusic/tearout-gun/releases/tag/v0.1.0-beta)**
 
 ## Using it
 
