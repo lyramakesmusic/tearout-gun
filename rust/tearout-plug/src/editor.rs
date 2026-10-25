@@ -646,8 +646,9 @@ fn lane(cx: &mut Cx, st: &mut Ui, view: &View, li: usize, y: f32, h: f32) {
     // spectrogram; dragging it takes the lane out as a file (option-drag on the mix takes every stem)
     let r = Rect::from_min_size(pos2(LANE_X, y), vec2(W - 20.0 - LANE_X, h));
     let sresp = cx.ui.interact(r, egui::Id::new(("lane-drag", ln.name)), Sense::click_and_drag());
-    // a click plays the lane: the mix as a note, a stem on its own
+    // a click picks the lane and plays it: the mix as a note, a stem on its own
     if sresp.clicked() {
+        st.sel = li;
         if li == 0 { AUDITION.store(true, Ordering::Relaxed); }
         else { let _ = cx.sh.preview.0.try_send(Arc::new(crate::worker::Sound { l: (*ln.l).clone(), r: (*ln.r).clone(), note: view.p.0[NOTE] })); }
     }
@@ -795,8 +796,8 @@ fn env_curve(cx: &mut Cx, id: &str, r: Rect, knobs: [usize; 5]) {
     let first = view_t0().floor().max(0.0) as usize;
     let pts: Vec<Pos2> = (first..=last.max(first)).map(|i| pos2(tx(r, i as f64), yd(20.0 * (e[i] as f64).max(1e-6).log10()))).collect();
     cx.painter().add(Shape::line(pts, Stroke::new(1.0, alpha(BRIGHT, 0.3))));
-    if end_ms >= view_end() || end_ms < view_t0() { return; }
-    if handle(cx, &format!("{id}_len"), pos2(tx(r, end_ms), yd(-48.0)), BRIGHT, true, (true, exp)).is_some() {
+    if end_ms < view_t0() { return; }
+    if handle(cx, &format!("{id}_len"), pos2(tx(r, end_ms).min(r.right() - 4.0), yd(-48.0)), BRIGHT, true, (true, exp)).is_some() {
         let d = cx.ui.input(|i| i.pointer.delta());
         if d.x != 0.0 {
             let want = (end_ms + (d.x / r.width()) as f64 * view_span()).max(cx.gun(att) + 2.0);
@@ -855,8 +856,17 @@ fn hold_marker(cx: &mut Cx, id: &str, r: Rect, param: usize, label: &str) {
     let ms = cx.gun(param);
     let pt = cx.painter();
     if ms > view_end() {
+        // past the view's end the marker is its label at the edge, dragged the same way
         let s = format!("{} {:.0} →", label, ms);
-        cx.text(pos2(r.right() - 6.0, r.top() + 10.0), egui::Align2::RIGHT_CENTER, &s, mono(10.0), BRIGHT);
+        let at = pos2(r.right() - 6.0, r.top() + 10.0);
+        let lr = Rect::from_min_max(pos2(at.x - cx.text_w(&s, mono(10.0)), at.y - 8.0), pos2(at.x + 4.0, at.y + 8.0));
+        let resp = cx.ui.interact(lr, egui::Id::new(id), Sense::drag());
+        cx.text(at, egui::Align2::RIGHT_CENTER, &s, mono(10.0), BRIGHT);
+        if resp.hovered() || resp.dragged() { cx.ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal); }
+        if resp.dragged() {
+            let dx = cx.ui.input(|i| i.pointer.delta().x);
+            if dx != 0.0 { cx.set_val(param, (ms + (dx / r.width()) as f64 * view_span()).clamp(SPEC[param].min, SPEC[param].max)); }
+        }
         return;
     }
     let x = tx(r, ms);
@@ -942,8 +952,8 @@ fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32, spans_ms: Option<(f6
                 let dx = cx.ui.input(|i| i.pointer.delta().x);
                 if dx != 0.0 { cx.set_val(SPICE_DELAY, (d + (dx / r.width()) as f64 * view_span()).clamp(SPEC[SPICE_DELAY].min, SPEC[SPICE_DELAY].max)); }
             }
-            if off < view_end() && off > on + 1.0 {
-                if let Some(_p) = handle(cx, "spice_len", pos2(tx(r, off), y), col, true, (true, false)) {
+            if off > on + 1.0 {
+                if let Some(_p) = handle(cx, "spice_len", pos2(tx(r, off).min(r.right() - 4.0), y), col, true, (true, false)) {
                     let dx = cx.ui.input(|i| i.pointer.delta().x);
                     if dx != 0.0 {
                         let want = (off + (dx / r.width()) as f64 * view_span()).max(on + 2.0);
@@ -968,8 +978,9 @@ fn overlays(cx: &mut Cx, name: &str, r: Rect, col: Color32, spans_ms: Option<(f6
                 let _ = p;
             }
             if cx.gun(start) > 0.5 { cx.text(pos2(sx + 10.0, y - 12.0), egui::Align2::LEFT_CENTER, &format!("+{:.0} ms", cx.gun(start)), mono(9.0), DIM); }
-            if cx.gun(len) < view_end() {
-                if let Some(p) = handle(cx, &format!("{n}_len"), pos2(tx(r, cx.gun(len)), y), col, true, (true, false)) { cx.set_val(len, tms(r, p.x).clamp(SPEC[len].min, SPEC[len].max)); }
+            if let Some(_p) = handle(cx, &format!("{n}_len"), pos2(tx(r, cx.gun(len)).min(r.right() - 4.0), y), col, true, (true, false)) {
+                let dx = cx.ui.input(|i| i.pointer.delta().x);
+                if dx != 0.0 { cx.set_val(len, (cx.gun(len) + (dx / r.width()) as f64 * view_span()).clamp(SPEC[len].min, SPEC[len].max)); }
             }
         }
         _ => {}
@@ -1094,11 +1105,27 @@ fn value_field(cx: &mut Cx, st: &mut Ui, i: usize, at: Pos2, font: FontId, col: 
     if resp.double_clicked() { st.editing = Some((i, edit_text(s, cx.gun(i)))); }
 }
 
+/// The latest time any shown lane's handle sits at, ms.
+fn handle_reach(cx: &Cx, view: &View) -> f64 {
+    let env = |hold: usize, rel: usize, shape: usize| if cx.gun(shape).round() == 0.0 { cx.gun(hold) + cx.gun(rel) } else { cx.gun(hold) };
+    view.lanes.iter().map(|ln| match ln.name {
+        "sub" => env(SUB_HOLD, SUB_REL, SUB_SHAPE).max(cx.gun(SUB_TAU)),
+        "transient" => env(TR_HOLD, TR_REL, TR_SHAPE),
+        "body" => env(BODY_HOLD, BODY_REL, BODY_SHAPE).max(cx.gun(BODY_FLT_TAU)),
+        "spice" => cx.gun(SPICE_DELAY) + cx.gun(SPICE_LEN),
+        "reverb" => cx.gun(REV_SIZE),
+        n => crate::worker::sample_slot(n).map_or(0.0, |k| cx.gun(S1_LVL + 10 * (k - 1) + 4)),
+    }).fold(0.0, f64::max)
+}
+
 /// The lanes' time window: pinch, or command/control with the wheel, zooms around the pointer; sideways
 /// scrolling (or shift with the wheel) pans. It spans 20 ms up to the whole sound.
 fn time_window(cx: &mut Cx, st: &mut Ui, view: &View) {
     let lanes = Rect::from_min_max(pos2(LANE_X, LANES_TOP), pos2(W - 20.0, STRIP_TOP - 12.0));
-    let len = view.len_ms.max(20.0);
+    let len = view.len_ms.max(handle_reach(cx, view) * 1.08).max(20.0);
+    // fully zoomed out stays fully zoomed out as the sound grows
+    thread_local! { static FULL: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) }; }
+    if (st.span - FULL.with(|f| f.replace(len))).abs() < 1e-6 { st.span = len; }
     let hover = cx.ui.input(|i| i.pointer.hover_pos()).filter(|p| lanes.contains(*p));
     #[cfg(target_os = "macos")]
     let pinch = crate::macos::take_pinch();
@@ -1370,7 +1397,7 @@ fn drag_out(st: &Ui, view: &View, lanes: &[usize]) {
     let paths: Vec<_> = lanes
         .iter()
         .filter_map(|&i| view.lanes.get(i))
-        .filter_map(|ln| crate::export::lane_file(&preset, ln.name, &note_name(view.p.0[NOTE]).replace('♯', "#"), view.patch, &ln.l, &ln.r, sr).map_err(|e| nih_log!("export failed: {e}")).ok())
+        .filter_map(|ln| crate::export::lane_file(&preset, ln.name, &note_name(view.p.0[NOTE]), view.patch, &ln.l, &ln.r, sr).map_err(|e| nih_log!("export failed: {e}")).ok())
         .collect();
     if paths.is_empty() { return; }
     nih_log!("drag out: {} file(s), first {}", paths.len(), paths[0].display());

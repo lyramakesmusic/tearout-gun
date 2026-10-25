@@ -49,7 +49,7 @@ pub fn fmt_value(s: &Spec, v: f64) -> String {
 }
 
 pub fn note_name(m: f64) -> String {
-    const NAMES: [&str; 12] = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+    const NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
     let m = m.round() as i64;
     format!("{}{}", NAMES[m.rem_euclid(12) as usize], m.div_euclid(12) - 1)
 }
