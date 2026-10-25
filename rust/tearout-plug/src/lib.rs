@@ -16,6 +16,7 @@ pub mod macos;
 pub mod params;
 pub mod presets;
 pub mod roll;
+pub mod tips;
 #[cfg(windows)]
 pub mod win;
 pub mod worker;

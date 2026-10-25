@@ -6,7 +6,7 @@ A browser synth for tearout guns, snares, chugs and pings. Everything renders of
 
 **[Open it in web](https://lyramakesmusic.github.io/tearout-gun/)**
 
-**[Download it as vst3](https://github.com/lyramakesmusic/tearout-gun/releases/tag/v0.1.0-beta)**
+**[Download it as vst3](https://github.com/lyramakesmusic/tearout-gun/releases/tag/v0.2.0-beta)**
 
 ## Using it
 

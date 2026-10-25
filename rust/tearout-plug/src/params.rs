@@ -36,8 +36,9 @@ pub fn fmt_value(s: &Spec, v: f64) -> String {
         return opts[i].to_string();
     }
     match s.unit {
-        "Hz" if v >= 1000.0 => format!("{:.1} kHz", v / 1000.0),
-        "Hz" => format!("{:.0} Hz", v),
+        "Hz" if v >= 1000.0 => format!("{:.1} kHz ({})", v / 1000.0, hz_note(v)),
+        "Hz" if v >= 20.0 => format!("{:.0} Hz ({})", v, hz_note(v)),
+        "Hz" => format!("{:.1} Hz", v),
         "ms" if v >= 100.0 => format!("{:.0} ms", v),
         "ms" => format!("{:.1} ms", v),
         "dB" => format!("{:+.1}", v).replace('-', "−"),
@@ -46,6 +47,20 @@ pub fn fmt_value(s: &Spec, v: f64) -> String {
         _ if s.scale == Scale::Int => format!("{:.0}", v),
         _ => format!("{:.2}", v),
     }
+}
+
+/// The note nearest a frequency, as "F4".
+pub fn hz_note(f: f64) -> String { note_name(69.0 + 12.0 * (f / 440.0).log2()) }
+
+/// A note typed as "F#4", "Bb2" or "c-1", as a MIDI note.
+pub fn parse_note(t: &str) -> Option<f64> {
+    let t = t.trim().to_lowercase();
+    let mut c = t.chars();
+    let base = match c.next()? { 'c' => 0, 'd' => 2, 'e' => 4, 'f' => 5, 'g' => 7, 'a' => 9, 'b' => 11, _ => return None };
+    let rest: String = c.collect();
+    let (shift, oct) = if let Some(o) = rest.strip_prefix('#') { (1, o) } else if let Some(o) = rest.strip_prefix('b').filter(|o| !o.is_empty()) { (-1, o) } else { (0, rest.as_str()) };
+    let oct: i64 = oct.trim().parse().ok().filter(|o: &i64| (-2..=10).contains(o))?;
+    Some(((oct + 1) * 12 + base + shift) as f64)
 }
 
 pub fn note_name(m: f64) -> String {
