@@ -870,14 +870,6 @@ impl<P: Vst3Plugin> IAudioProcessor for Wrapper<P> {
             vst3_sys::vst::SymbolicSampleSizes::kSample32 as i32
         );
 
-        // This is needed when activating the plugin and when restoring state
-        self.inner.current_buffer_config.store(Some(BufferConfig {
-            sample_rate: setup.sample_rate as f32,
-            min_buffer_size: None,
-            max_buffer_size: setup.max_samples_per_block as u32,
-            process_mode: self.inner.current_process_mode.load(),
-        }));
-
         let mode = match setup.process_mode {
             n if n == ProcessModes::kRealtime as i32 => ProcessMode::Realtime,
             n if n == ProcessModes::kPrefetch as i32 => ProcessMode::Buffered,
@@ -888,6 +880,15 @@ impl<P: Vst3Plugin> IAudioProcessor for Wrapper<P> {
             }
         };
         self.inner.current_process_mode.store(mode);
+
+        // This is needed when activating the plugin and when restoring state
+        self.inner.current_buffer_config.store(Some(BufferConfig {
+            sample_rate: setup.sample_rate as f32,
+            min_buffer_size: None,
+            max_buffer_size: setup.max_samples_per_block as u32,
+            process_mode: self.inner.current_process_mode.load(),
+        }));
+
 
         // Initializing the plugin happens in `IAudioProcessor::set_active()` because the host may
         // still change the channel layouts at this point

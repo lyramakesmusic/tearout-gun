@@ -111,8 +111,6 @@ impl Ui {
         self.zoom = None;
         self.credit = None;
         self.seen = u64::MAX;
-        #[cfg(windows)]
-        crate::win::warm_shell();
     }
 }
 
