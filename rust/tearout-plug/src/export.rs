@@ -83,3 +83,14 @@ pub fn lane_file(preset: &str, lane: &str, note: &str, patch: u64, l: &[f32], r:
     if !p.exists() { write_wav(&p, l, r, sr)?; }
     Ok(p)
 }
+
+/// Append a timestamped line to drag-log.txt in the Tearout Farm folder (kept to its last 200 lines).
+pub fn log(line: &str) {
+    let path = root().join("drag-log.txt");
+    let mut lines: Vec<String> = std::fs::read_to_string(&path).map(|s| s.lines().map(String::from).collect()).unwrap_or_default();
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    lines.push(format!("{t:.3} {line}"));
+    let keep = lines.len().saturating_sub(200);
+    let _ = std::fs::create_dir_all(root());
+    let _ = std::fs::write(&path, lines[keep..].join("\n") + "\n");
+}

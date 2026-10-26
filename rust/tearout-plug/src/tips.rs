@@ -120,7 +120,7 @@ pub fn tip(id: &str) -> Option<&'static str> {
         // sample slots
         "s1_lvl" | "s2_lvl" | "s3_lvl" => "sample level in dB; -60 is off",
         "s1_pitch" | "s2_pitch" | "s3_pitch" => "repitch in semitones; speed changes with it",
-        "s1_key" | "s2_key" | "s3_key" => "fixed plays as set; key follows the note, relative to C1",
+        "s1_key" | "s2_key" | "s3_key" => "fixed plays as set; key follows the note, relative to C0",
         "s1_start" | "s2_start" | "s3_start" => "skip this many ms into the sample",
         "s1_len" | "s2_len" | "s3_len" => "ms of sample played before the gate fade",
         "s1_rel" | "s2_rel" | "s3_rel" => "fade-out length in ms after the sample length",
@@ -138,7 +138,7 @@ pub fn tip(id: &str) -> Option<&'static str> {
         "spice_density" => "bleeps or crackles per second",
         "spice_len" => "window in ms the spice lives in; it fades out across it",
         "spice_hp" => "highpass on the spice in Hz",
-        "spice_key" => "fixed keeps freq as set; key moves it with the note, relative to C1",
+        "spice_key" => "fixed keeps freq as set; key moves it with the note, relative to C0",
         "spice_delay" => "shift the spice in ms; negative crops its start",
 
         // reverb

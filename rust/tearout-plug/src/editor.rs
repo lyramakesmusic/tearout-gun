@@ -472,7 +472,7 @@ fn header(cx: &mut Cx, st: &mut Ui) {
         let since = cx.ui.input(|i| i.time) - st.keys_moved;
         if st.keys_on && since < 1.5 {
             let a = (1.0 - (since as f32 - 1.0).max(0.0) * 2.0).clamp(0.0, 1.0);
-            cx.text(pos2(kr.center().x, kr.bottom() + 6.0), egui::Align2::CENTER_CENTER, &format!("C{}–E{}", st.keys_oct - 1, st.keys_oct), mono(9.0), alpha(TEXT, a));
+            cx.text(pos2(kr.center().x, kr.bottom() + 6.0), egui::Align2::CENTER_CENTER, &format!("C{}–E{}", st.keys_oct - 2, st.keys_oct - 1), mono(9.0), alpha(TEXT, a));
         }
         rx -= 28.0 + 10.0;
     }
@@ -1188,6 +1188,7 @@ fn control(cx: &mut Cx, id: (usize, usize), i: usize, center: Pos2, rad: f32, co
 
 /// A knob's value as typed into its field.
 fn edit_text(s: &tearout_dsp::Spec, v: f64) -> String {
+    if s.unit == "midi" { return note_name(v); }
     if s.scale == tearout_dsp::Scale::Int { return format!("{}", v.round()); }
     let t = format!("{:.2}", v);
     t.trim_end_matches('0').trim_end_matches('.').to_string()
@@ -1549,6 +1550,7 @@ fn power_icon(cx: &Cx, c: Pos2, col: Color32, on: bool) {
 fn drag_out(st: &Ui, view: &View, lanes: &[usize]) {
     let preset = st.list.get(st.preset).map(|p| p.name.clone()).unwrap_or_default();
     let sr = tearout_dsp::SR as u32;
+    let t0 = std::time::Instant::now();
     let paths: Vec<_> = lanes
         .iter()
         .filter_map(|&i| view.lanes.get(i))
@@ -1556,6 +1558,7 @@ fn drag_out(st: &Ui, view: &View, lanes: &[usize]) {
         .collect();
     if paths.is_empty() { return; }
     nih_log!("drag out: {} file(s), first {}", paths.len(), paths[0].display());
+    crate::export::log(&format!("drag: {} file(s) written in {:.0} ms", paths.len(), t0.elapsed().as_secs_f64() * 1000.0));
     #[cfg(target_os = "macos")]
     if !crate::macos::drag_files(&paths) { nih_log!("drag did not start"); }
     #[cfg(windows)]

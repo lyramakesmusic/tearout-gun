@@ -72,6 +72,10 @@ pub fn warm_shell() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         let _ = std::thread::Builder::new().name("tearout-shell".into()).spawn(|| unsafe {
+            let t0 = std::time::Instant::now();
+            struct Done(std::time::Instant);
+            impl Drop for Done { fn drop(&mut self) { crate::export::log(&format!("shell warm-up took {:.0} ms", self.0.elapsed().as_secs_f64() * 1000.0)); } }
+            let _done = Done(t0);
             let dir = crate::export::dir();
             let _ = std::fs::create_dir_all(&dir);
             let Some(parent) = dir.parent() else { return };
@@ -96,6 +100,8 @@ pub fn warm_shell() {
 
 unsafe fn run(paths: &[PathBuf], owner: HWND, ui: u32) {
     let Some(dir) = paths[0].parent() else { return };
+    let t0 = std::time::Instant::now();
+    let ms = |t: std::time::Instant| t.elapsed().as_secs_f64() * 1000.0;
     let ole = OleInitialize(std::ptr::null_mut()) >= 0;
     let folder = ILCreateFromPathW(wide(dir).as_ptr());
     if !folder.is_null() {
@@ -108,8 +114,11 @@ unsafe fn run(paths: &[PathBuf], owner: HWND, ui: u32) {
             // sharing the UI thread's input state for the drag itself gives it the held button and the mouse capture
             let me = GetCurrentThreadId();
             let attached = AttachThreadInput(me, ui, 1) != 0;
+            crate::export::log(&format!("drag: shell ready after {:.0} ms", ms(t0)));
+            let t1 = std::time::Instant::now();
             let hr = DoDragDrop(obj, &mut src as *mut DropSource as *mut core::ffi::c_void, DROPEFFECT_COPY, &mut effect);
             if attached { AttachThreadInput(me, ui, 0); }
+            crate::export::log(&format!("drag: held {:.0} ms, dropped (effect {effect}, hr {hr:#x})", ms(t1)));
             nih_plug::nih_log!("drag out ended: hr {hr:#x}, effect {effect}");
             // IUnknown::Release
             let vt = *(obj as *const *const [usize; 3]);

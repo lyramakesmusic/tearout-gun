@@ -59,14 +59,15 @@ pub fn parse_note(t: &str) -> Option<f64> {
     let base = match c.next()? { 'c' => 0, 'd' => 2, 'e' => 4, 'f' => 5, 'g' => 7, 'a' => 9, 'b' => 11, _ => return None };
     let rest: String = c.collect();
     let (shift, oct) = if let Some(o) = rest.strip_prefix('#') { (1, o) } else if let Some(o) = rest.strip_prefix('b').filter(|o| !o.is_empty()) { (-1, o) } else { (0, rest.as_str()) };
-    let oct: i64 = oct.trim().parse().ok().filter(|o: &i64| (-2..=10).contains(o))?;
-    Some(((oct + 1) * 12 + base + shift) as f64)
+    let oct: i64 = oct.trim().parse().ok().filter(|o: &i64| (-2..=8).contains(o))?;
+    Some(((oct + 2) * 12 + base + shift) as f64)
 }
 
+/// A MIDI note's name the way Ableton, Logic, Cubase and Bitwig write it: 60 is C3.
 pub fn note_name(m: f64) -> String {
     const NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
     let m = m.round() as i64;
-    format!("{}{}", NAMES[m.rem_euclid(12) as usize], m.div_euclid(12) - 1)
+    format!("{}{}", NAMES[m.rem_euclid(12) as usize], m.div_euclid(12) - 2)
 }
 
 impl Default for GunKnobs {

@@ -20,6 +20,8 @@ pub struct Sound { pub l: Vec<f32>, pub r: Vec<f32>, pub note: f64 }
 /// next dice roll.
 #[derive(Default)]
 pub struct Bank {
+    /// [`hash`] of the patch `base` and `notes` were rendered from
+    pub key: u64,
     pub base: Option<Arc<Sound>>,
     pub notes: Vec<Option<Arc<Sound>>>,
     pub dice: Option<Arc<Sound>>,
@@ -187,7 +189,7 @@ pub fn fold_note(n: u8) -> f64 {
     m
 }
 
-fn hash(p: &Params, skip_note: bool) -> u64 {
+pub fn hash(p: &Params, skip_note: bool) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     for i in 0..N { if !(skip_note && i == NOTE) { p.0[i].to_bits().hash(&mut h); } }
@@ -223,7 +225,12 @@ pub fn roll(p: &Params, amt: f64, r: &mut tearout_dsp::dsp::Rng) -> Params {
 pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
     let mut main = Engine::new();
     let mut other = Engine::new();
-    let mut stem_eng: Vec<Engine> = (0..LAYERS.len() + 2).map(|_| Engine::new()).collect();
+    // the editor's lanes build on their own thread, so a knob change always renders for the audio thread at once
+    let job: Arc<Mutex<Option<(Params, Arc<Sound>)>>> = Arc::new(Mutex::new(None));
+    let viewer = {
+        let (params, sh, job) = (params.clone(), sh.clone(), job.clone());
+        std::thread::Builder::new().name("tearout-view".into()).spawn(move || views(params, sh, job)).ok()
+    };
     let mut last = 0u64;
     let mut last_view = 0u64;
     let mut rng = tearout_dsp::dsp::Rng::new(1234.0);
@@ -242,7 +249,7 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
             for k in 0..3 {
                 if want[k] == loaded[k] { continue; }
                 let audio = if want[k].is_empty() { None } else { decode(&want[k]).map_err(|e| nih_plug::nih_log!("sample {}: {e}", want[k])).ok() };
-                for e in [&mut main, &mut other].into_iter().chain(stem_eng.iter_mut()) {
+                for e in [&mut main, &mut other] {
                     e.set_sample(k + 1, audio.as_ref().map(|(l, r, sr)| (&l[..], &r[..], *sr)));
                 }
             }
@@ -264,6 +271,7 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
             for n in b.notes.iter_mut() { *n = None; }
             b.notes[home] = Some(base.clone());
             b.base = Some(base);
+            b.key = k;
             b.dice = None;
             drop(b);
             // the note being played renders next, so it keeps sounding exact while knobs move
@@ -280,6 +288,8 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
         // notes the audio thread asked for come first
         match notes.recv_timeout(Duration::from_millis(if busy { 0 } else { 8 })) {
             Ok(n) => {
+                // knobs that moved while waiting render first
+                if hash(&patch(&params, &sh), false) != last { continue; }
                 let slot = note_slot(n);
                 if !have[slot] {
                     let s = render_note(&mut other, &p, slot);
@@ -308,7 +318,37 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
             last_view = kv;
             let b = sh.bank.lock().unwrap().base.clone();
             let Some(mix) = b else { continue };
-            let full = full_patch(&params, &sh);
+            *job.lock().unwrap() = Some((full_patch(&params, &sh), mix));
+            continue;
+        }
+        // fill the rest of the keyboard, nearest the last played note first
+        let at = note_slot(sh.last_note.load(Ordering::Relaxed)) as i64;
+        if let Some(slot) = (0..NOTE_SLOTS).filter(|&s| !have[s]).min_by_key(|&s| (s as i64 - at).abs()) {
+            let s = render_note(&mut other, &p, slot);
+            have[slot] = true;
+            sh.bank.lock().unwrap().notes[slot] = Some(s);
+        }
+    }
+    if let Some(h) = viewer { let _ = h.join(); }
+}
+
+/// The editor's lanes: each patch handed over in `job` (the newest one) gets its stems and spectrograms; a
+/// zoomed-in window gets sharper ones of its own.
+fn views(params: Arc<PlugParams>, sh: Arc<Shared>, job: Arc<Mutex<Option<(Params, Arc<Sound>)>>>) {
+    let mut stem_eng: Vec<Engine> = (0..LAYERS.len() + 2).map(|_| Engine::new()).collect();
+    let mut loaded: [String; 3] = Default::default();
+    while !sh.quit.load(Ordering::Relaxed) {
+        let want = params.samples.read().map(|s| s.clone()).unwrap_or_default();
+        if want != loaded {
+            for k in 0..3 {
+                if want[k] == loaded[k] { continue; }
+                let audio = if want[k].is_empty() { None } else { decode(&want[k]).ok() };
+                for e in stem_eng.iter_mut() { e.set_sample(k + 1, audio.as_ref().map(|(l, r, sr)| (&l[..], &r[..], *sr))); }
+            }
+            loaded = want;
+        }
+        let next = job.lock().unwrap().take();
+        if let Some((full, mix)) = next {
             let v = build_view(&full, &mix, &mut stem_eng, sh.view_version.load(Ordering::Relaxed) + 1);
             *sh.view.lock().unwrap() = Some(Arc::new(v));
             sh.view_version.fetch_add(1, Ordering::Release);
@@ -340,13 +380,7 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
                 }
             }
         }
-        // fill the rest of the keyboard, nearest the last played note first
-        let at = note_slot(sh.last_note.load(Ordering::Relaxed)) as i64;
-        if let Some(slot) = (0..NOTE_SLOTS).filter(|&s| !have[s]).min_by_key(|&s| (s as i64 - at).abs()) {
-            let s = render_note(&mut other, &p, slot);
-            have[slot] = true;
-            sh.bank.lock().unwrap().notes[slot] = Some(s);
-        }
+        std::thread::sleep(Duration::from_millis(8));
     }
 }
 
