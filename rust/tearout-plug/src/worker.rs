@@ -51,9 +51,12 @@ impl Trace {
 pub struct Bank {
     /// [`hash`] of the patch `base` and `notes` were rendered from
     pub key: u64,
+    /// the patch at the note last played, which other notes play transposed until their own renders land
     pub base: Option<Arc<Sound>>,
     pub notes: Vec<Option<Arc<Sound>>>,
     pub dice: Option<Arc<Sound>>,
+    /// [`hash`] of the patch the dice roll varies
+    pub dice_key: u64,
 }
 
 pub struct Lane {
@@ -267,6 +270,7 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
     let mut rng = tearout_dsp::dsp::Rng::new(1234.0);
     let mut pending_view: Option<Params> = None;
     let mut have = vec![false; NOTE_SLOTS];
+    let mut played = vec![false; NOTE_SLOTS];
     let mut loaded: [String; 3] = Default::default();
     let render_note = |eng: &mut Engine, p: &Params, slot: usize| {
         let mut q = p.clone();
@@ -295,24 +299,23 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
         let k = hash(&p, false);
         if k != last {
             last = k;
-            let o = main.render(&p);
-            let base = Arc::new(Sound { l: o.l, r: o.r, note: p.0[NOTE] });
+            // the note being played renders first, so a note waiting on these knobs gets them soonest; the
+            // patch's own note (the editor's view) follows
             let home = (p.0[NOTE] - SPEC[NOTE].min) as usize;
-            have.iter_mut().for_each(|h| *h = false);
-            have[home] = true;
-            let mut b = sh.bank.lock().unwrap();
-            for n in b.notes.iter_mut() { *n = None; }
-            b.notes[home] = Some(base.clone());
-            b.base = Some(base);
-            b.key = k;
-            b.dice = None;
-            drop(b);
-            // the note being played renders next, so it keeps sounding exact while knobs move
             let hot = note_slot(sh.last_note.load(Ordering::Relaxed));
-            if hot != home {
-                let s = render_note(&mut other, &p, hot);
-                have[hot] = true;
-                sh.bank.lock().unwrap().notes[hot] = Some(s);
+            have.iter_mut().for_each(|h| *h = false);
+            played[hot] = true;
+            for slot in if hot == home { vec![home] } else { vec![hot, home] } {
+                let s = render_note(if slot == hot { &mut main } else { &mut other }, &p, slot);
+                have[slot] = true;
+                let mut b = sh.bank.lock().unwrap();
+                if slot == hot {
+                    for n in b.notes.iter_mut() { *n = None; }
+                    b.base = Some(s.clone());
+                    b.key = k;
+                    b.dice = None;
+                }
+                b.notes[slot] = Some(s);
             }
             sh.dice_used.store(true, Ordering::Relaxed);
             pending_view = Some(p.clone());
@@ -324,6 +327,7 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
                 // knobs that moved while waiting render first
                 if hash(&patch(&params, &sh), false) != last { continue; }
                 let slot = note_slot(n);
+                played[slot] = true;
                 if !have[slot] {
                     let s = render_note(&mut other, &p, slot);
                     have[slot] = true;
@@ -340,7 +344,9 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
             crate::roll::hold_stems(&p, &mut q);
             q.0[NOTE] = fold_note(sh.last_note.load(Ordering::Relaxed));
             let o = other.render(&q);
-            sh.bank.lock().unwrap().dice = Some(Arc::new(Sound { l: o.l, r: o.r, note: q.0[NOTE] }));
+            let mut b = sh.bank.lock().unwrap();
+            b.dice = Some(Arc::new(Sound { l: o.l, r: o.r, note: q.0[NOTE] }));
+            b.dice_key = k;
             continue;
         }
         // the view is the slow part: build it only once the patch has settled for one poll
@@ -349,14 +355,15 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
             let kv = hash(&vp, false);
             if kv == last_view { continue; }
             last_view = kv;
-            let b = sh.bank.lock().unwrap().base.clone();
+            let home = (vp.0[NOTE] - SPEC[NOTE].min) as usize;
+            let b = sh.bank.lock().unwrap().notes[home].clone();
             let Some(mix) = b else { continue };
             *job.lock().unwrap() = Some((full_patch(&params, &sh), mix));
             continue;
         }
-        // fill the rest of the keyboard, nearest the last played note first
+        // the other notes that have been played get their exact renders, nearest the last played first
         let at = note_slot(sh.last_note.load(Ordering::Relaxed)) as i64;
-        if let Some(slot) = (0..NOTE_SLOTS).filter(|&s| !have[s]).min_by_key(|&s| (s as i64 - at).abs()) {
+        if let Some(slot) = (0..NOTE_SLOTS).filter(|&s| played[s] && !have[s]).min_by_key(|&s| (s as i64 - at).abs()) {
             let s = render_note(&mut other, &p, slot);
             have[slot] = true;
             sh.bank.lock().unwrap().notes[slot] = Some(s);

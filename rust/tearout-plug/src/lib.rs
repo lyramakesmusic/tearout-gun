@@ -27,7 +27,7 @@ use worker::{fold_note, Shared, Sound};
 const MAX_VOICES: usize = 16;
 /// A voice younger than this whose knobs change (automation arriving just after its note, or a render that
 /// took a while) crossfades to the new render over SWAP_FADE_MS.
-const SWAP_MS: f64 = 60.0;
+const SWAP_MS: f64 = 200.0;
 const SWAP_FADE_MS: f64 = 3.0;
 /// This many calls in a row, each well inside the time its audio lasts, is a faster-than-realtime render.
 const FAST_CALLS: u8 = 16;
@@ -259,7 +259,7 @@ impl Tearout {
 /// What a note plays from the bank: the dice roll when dice are on, else its exact render, else the patch at its
 /// own note (resampled). Returns the sound, whether it is the dice roll, and whether it is exact.
 fn pick(b: &worker::Bank, note: u8, dice: bool) -> Option<(Arc<Sound>, bool, bool)> {
-    if dice { if let Some(d) = b.dice.clone() { return Some((d, true, false)); } }
+    if dice && b.dice_key == b.key { if let Some(d) = b.dice.clone() { return Some((d, true, false)); } }
     if let Some(s) = b.notes.get(worker::note_slot(note)).cloned().flatten() { return Some((s, false, true)); }
     b.base.clone().map(|s| (s, false, false))
 }
