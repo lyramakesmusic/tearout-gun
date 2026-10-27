@@ -103,6 +103,9 @@ pub struct Tearout {
     /// realtime (a bounce the host didn't flag as offline)
     last_call: Option<(std::time::Instant, usize)>,
     fast: u8,
+    /// the knobs and transport as of the last block, and where the current block starts, for the log
+    seen: Option<(tearout_dsp::Params, bool)>,
+    block_pos: i64,
 }
 
 impl Default for Tearout {
@@ -112,7 +115,7 @@ impl Default for Tearout {
         let (tx, rx) = bounded::<u8>(64);
         let (p2, s2) = (params.clone(), shared.clone());
         let worker = std::thread::Builder::new().name("tearout-render".into()).spawn(move || worker::run(p2, s2, rx)).ok();
-        Self { params, shared, note_tx: tx, worker, voices: Vec::with_capacity(MAX_VOICES), events: Vec::with_capacity(256), sr: 48000.0, limiter: limiter::Limiter::new(48000.0), hp_coef: HpCoef::new(CHOKE_HZ, 48000.0), offline: false, last_call: None, fast: 0 }
+        Self { params, shared, note_tx: tx, worker, voices: Vec::with_capacity(MAX_VOICES), events: Vec::with_capacity(256), sr: 48000.0, limiter: limiter::Limiter::new(48000.0), hp_coef: HpCoef::new(CHOKE_HZ, 48000.0), offline: false, last_call: None, fast: 0, seen: None, block_pos: 0 }
     }
 }
 
@@ -134,7 +137,9 @@ impl Tearout {
         // young voices whose knobs moved since their note pick up the new render where they are
         let young = (SWAP_MS * self.sr / 1000.0) as usize;
         if self.voices.iter().any(|v| v.age < young) {
-            let key = self.key();
+            let now_p = worker::patch(&self.params, &self.shared);
+            let key = worker::hash(&now_p, false);
+            let shots = now_p.0[tearout_dsp::id::B_SHOTS];
             let dice_on = self.params.dice.value();
             if let Ok(b) = self.shared.bank.try_lock() {
                 if b.key == key && b.base.is_some() {
@@ -152,6 +157,7 @@ impl Tearout {
                         v.key = key;
                         v.dice = is_dice;
                         v.exact = exact;
+                        let _ = self.shared.trace.0.try_send(worker::Trace::Swap { note: v.note, age_ms: v.age as f64 * 1000.0 / self.sr, shots });
                     }
                 }
             }
@@ -212,10 +218,11 @@ impl Tearout {
     fn note_on(&mut self, note: u8, vel: f32) {
         self.shared.last_note.store(note, Ordering::Relaxed);
         self.shared.notes_seen.fetch_add(1, Ordering::Relaxed);
+        let t_wait = std::time::Instant::now();
         if self.offline || self.fast >= FAST_CALLS {
             let _ = self.note_tx.try_send(note);
             let slot = worker::note_slot(note);
-            let t0 = std::time::Instant::now();
+            let t0 = t_wait;
             while t0.elapsed().as_secs_f64() < 2.0 {
                 let key = self.key();
                 let ready = self.shared.bank.lock().is_ok_and(|b| b.key == key && b.notes.get(slot).is_some_and(|s| s.is_some()));
@@ -223,6 +230,10 @@ impl Tearout {
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
         }
+        let waited_ms = if self.offline || self.fast >= FAST_CALLS { t_wait.elapsed().as_secs_f64() * 1000.0 } else { 0.0 };
+        let shots = worker::patch(&self.params, &self.shared).0[tearout_dsp::id::B_SHOTS];
+        let fresh = self.fresh();
+        let _ = self.shared.trace.0.try_send(worker::Trace::Note { pos: self.block_pos, note, shots, fresh, waited_ms });
         let dice = self.params.dice.value();
         let (s, key, is_dice, exact) = {
             let Ok(b) = self.shared.bank.try_lock() else { return };
@@ -276,6 +287,7 @@ impl Plugin for Tearout {
     fn initialize(&mut self, _layout: &AudioIOLayout, cfg: &BufferConfig, ctx: &mut impl InitContext<Self>) -> bool {
         self.sr = cfg.sample_rate as f64;
         self.offline = cfg.process_mode == ProcessMode::Offline;
+        let _ = self.shared.trace.0.try_send(worker::Trace::Start { offline: self.offline, sr: self.sr });
         self.limiter = limiter::Limiter::new(self.sr);
         self.hp_coef = HpCoef::new(CHOKE_HZ, self.sr);
         ctx.set_latency_samples(self.limiter.latency());
@@ -299,6 +311,17 @@ impl Plugin for Tearout {
             if let NoteEvent::NoteOn { timing, note, velocity, .. } = ev { events.push((timing as usize, note, velocity)); }
         }
         while let Ok((note, vel)) = self.shared.keys.1.try_recv() { events.push((0, note, vel)); }
+        let tr = ctx.transport();
+        self.block_pos = tr.pos_samples().unwrap_or(-1);
+        let now_p = worker::patch(&self.params, &self.shared);
+        let playing = tr.playing;
+        if let Some((was, was_playing)) = self.seen.as_ref() {
+            let mut changed = [(0u16, 0f64); 3];
+            let mut n = 0u16;
+            for i in 0..tearout_dsp::N { if was.0[i] != now_p.0[i] { if (n as usize) < 3 { changed[n as usize] = (i as u16, now_p.0[i]); } n += 1; } }
+            if n > 0 || *was_playing != playing { let _ = self.shared.trace.0.try_send(worker::Trace::Block { pos: self.block_pos, playing, changed, n, fast: self.fast >= FAST_CALLS }); }
+        }
+        self.seen = Some((now_p, playing));
         while let Ok(s) = self.shared.preview.1.try_recv() {
             if self.voices.len() >= MAX_VOICES { self.voices.remove(0); }
             let rate = tearout_dsp::SR / self.sr;

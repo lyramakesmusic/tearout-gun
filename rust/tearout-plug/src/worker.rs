@@ -16,6 +16,35 @@ pub const WAVE_COLS: usize = 820;
 
 pub struct Sound { pub l: Vec<f32>, pub r: Vec<f32>, pub note: f64 }
 
+/// An audio-thread event for the log: positions are the host's timeline in samples.
+#[derive(Clone, Copy)]
+pub enum Trace {
+    /// the plugin (re)started, rendering offline or live
+    Start { offline: bool, sr: f64 },
+    /// knobs changed since the last block (up to three of them, with their new values), or the transport
+    /// started or stopped
+    Block { pos: i64, playing: bool, changed: [(u16, f64); 3], n: u16, fast: bool },
+    /// a note started: whether the render matched the knobs, and how long it waited for one
+    Note { pos: i64, note: u8, shots: f64, fresh: bool, waited_ms: f64 },
+    /// a young note crossfaded to a newer render
+    Swap { note: u8, age_ms: f64, shots: f64 },
+}
+
+impl Trace {
+    fn line(&self) -> String {
+        let knob = |(i, v): (u16, f64)| format!("{} {}", SPEC[i as usize].id, crate::params::fmt_value(&SPEC[i as usize], v));
+        match *self {
+            Trace::Start { offline, sr } => format!("start: {} at {sr} Hz", if offline { "offline render" } else { "live" }),
+            Trace::Block { pos, playing, changed, n, fast } => {
+                let list: Vec<String> = changed[..(n as usize).min(3)].iter().map(|&c| knob(c)).collect();
+                format!("block @{pos}{}{}: {}{}", if playing { "" } else { " (stopped)" }, if fast { " (faster than realtime)" } else { "" }, list.join(", "), if n > 3 { format!(" +{} more", n - 3) } else { String::new() })
+            }
+            Trace::Note { pos, note, shots, fresh, waited_ms } => format!("note {note} @{pos}: shots {shots}, render {}{}", if fresh { "matched the knobs" } else { "was older than the knobs" }, if waited_ms > 0.05 { format!(", waited {waited_ms:.1} ms") } else { String::new() }),
+            Trace::Swap { note, age_ms, shots } => format!("note {note} switched to the newer render {age_ms:.1} ms in (shots {shots})"),
+        }
+    }
+}
+
 /// What the audio thread plays: the patch at its own note, renders at other notes as they finish, and the
 /// next dice roll.
 #[derive(Default)]
@@ -85,6 +114,8 @@ pub struct Shared {
     pub scope: Mutex<(Vec<f32>, usize, f64)>,
     /// notes the editor plays from the computer keyboard, for the audio thread
     pub keys: (crossbeam_channel::Sender<(u8, f32)>, crossbeam_channel::Receiver<(u8, f32)>),
+    /// what the audio thread saw, for tearout-log.txt
+    pub trace: (crossbeam_channel::Sender<Trace>, crossbeam_channel::Receiver<Trace>),
 }
 
 /// Mute/solo bit of a stem lane: the layers in [`LAYERS`] order, then reverb.
@@ -127,7 +158,7 @@ pub fn grid_interval(p: &mut Params, beats: f64, bpm: f64) {
 
 impl Default for Shared {
     fn default() -> Self {
-        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36), loaded: Mutex::new([false; 3]), tempo: AtomicU64::new(150f64.to_bits()), mute: Default::default(), solo: Default::default(), locked: Mutex::new(Vec::new()), keys: crossbeam_channel::bounded(64), scope: Mutex::new((vec![0.0; 8192], 0, 48000.0)), notes_seen: AtomicU64::new(0), preview: crossbeam_channel::bounded(4), zoom_req: Mutex::new(None), zoom: Mutex::new(None) }
+        Self { bank: Mutex::new(Bank { notes: vec![None; NOTE_SLOTS], ..Default::default() }), view: Mutex::new(None), view_version: AtomicU64::new(0), quit: AtomicBool::new(false), dice_used: AtomicBool::new(true), last_note: std::sync::atomic::AtomicU8::new(36), loaded: Mutex::new([false; 3]), tempo: AtomicU64::new(150f64.to_bits()), mute: Default::default(), solo: Default::default(), locked: Mutex::new(Vec::new()), keys: crossbeam_channel::bounded(64), trace: crossbeam_channel::bounded(1024), scope: Mutex::new((vec![0.0; 8192], 0, 48000.0)), notes_seen: AtomicU64::new(0), preview: crossbeam_channel::bounded(4), zoom_req: Mutex::new(None), zoom: Mutex::new(None) }
     }
 }
 
@@ -244,6 +275,8 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
         Arc::new(Sound { l: o.l, r: o.r, note: q.0[NOTE] })
     };
     while !sh.quit.load(Ordering::Relaxed) {
+        let lines: Vec<String> = sh.trace.1.try_iter().map(|t| t.line()).collect();
+        if !lines.is_empty() { crate::export::log_lines(&lines); }
         let want = params.samples.read().map(|s| s.clone()).unwrap_or_default();
         if want != loaded {
             for k in 0..3 {

@@ -84,13 +84,15 @@ pub fn lane_file(preset: &str, lane: &str, note: &str, patch: u64, l: &[f32], r:
     Ok(p)
 }
 
-/// Append a timestamped line to drag-log.txt in the Tearout Farm folder (kept to its last 200 lines).
-pub fn log(line: &str) {
-    let path = root().join("drag-log.txt");
+/// Append a timestamped line to tearout-log.txt in the Tearout Farm folder (kept to its last 400 lines).
+pub fn log(line: &str) { log_lines(&[line.to_string()]); }
+
+pub fn log_lines(new: &[String]) {
+    let path = root().join("tearout-log.txt");
     let mut lines: Vec<String> = std::fs::read_to_string(&path).map(|s| s.lines().map(String::from).collect()).unwrap_or_default();
     let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
-    lines.push(format!("{t:.3} {line}"));
-    let keep = lines.len().saturating_sub(200);
+    lines.extend(new.iter().map(|l| format!("{t:.3} {l}")));
+    let keep = lines.len().saturating_sub(400);
     let _ = std::fs::create_dir_all(root());
     let _ = std::fs::write(&path, lines[keep..].join("\n") + "\n");
 }
