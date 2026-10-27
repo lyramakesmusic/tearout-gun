@@ -426,5 +426,17 @@ mod tests {
         let own = v.s.l[at..at + 512].windows(2).map(|w| (w[1] - w[0]).abs()).fold(0f32, f32::max) * v.gain;
         println!("largest step between samples just after the switch: {jump:.3}; the new render alone there: {own:.3}");
         assert!(jump < own * 1.5 + 0.05, "the switch clicks");
+
+        // several notes in play: after a change all of them have exact renders about as soon as the first
+        let notes = [home, home + 3, home + 5, home + 7];
+        for &n in &notes { t.mix(&[(0, n, 1.0)], &mut l[..128], &mut r[..128]); std::thread::sleep(std::time::Duration::from_millis(40)); }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let t0 = std::time::Instant::now();
+        t.shared.mute.fetch_xor(1, Ordering::Relaxed);
+        let key = t.key();
+        let ready = |t: &Tearout| { let b = t.shared.bank.lock().unwrap(); b.key == key && notes.iter().all(|&n| b.notes[worker::note_slot(n)].is_some()) };
+        while !ready(&t) && t0.elapsed().as_secs() < 5 { std::thread::sleep(std::time::Duration::from_micros(300)); }
+        println!("four notes in play, all exact after a change: {:.1} ms", t0.elapsed().as_secs_f64() * 1000.0);
+        assert!(ready(&t));
     }
 }

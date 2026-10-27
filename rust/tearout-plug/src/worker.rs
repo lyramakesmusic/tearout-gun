@@ -259,6 +259,8 @@ pub fn roll(p: &Params, amt: f64, r: &mut tearout_dsp::dsp::Rng) -> Params {
 pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
     let mut main = Engine::new();
     let mut other = Engine::new();
+    // after a knob change, the other notes in play render alongside the one being played
+    let mut helpers: Vec<Engine> = (0..3).map(|_| Engine::new()).collect();
     // the editor's lanes build on their own thread, so a knob change always renders for the audio thread at once
     let job: Arc<Mutex<Option<(Params, Arc<Sound>)>>> = Arc::new(Mutex::new(None));
     let viewer = {
@@ -286,7 +288,7 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
             for k in 0..3 {
                 if want[k] == loaded[k] { continue; }
                 let audio = if want[k].is_empty() { None } else { decode(&want[k]).map_err(|e| nih_plug::nih_log!("sample {}: {e}", want[k])).ok() };
-                for e in [&mut main, &mut other] {
+                for e in [&mut main, &mut other].into_iter().chain(helpers.iter_mut()) {
                     e.set_sample(k + 1, audio.as_ref().map(|(l, r, sr)| (&l[..], &r[..], *sr)));
                 }
             }
@@ -305,18 +307,28 @@ pub fn run(params: Arc<PlugParams>, sh: Arc<Shared>, notes: Receiver<u8>) {
             let hot = note_slot(sh.last_note.load(Ordering::Relaxed));
             have.iter_mut().for_each(|h| *h = false);
             played[hot] = true;
-            for slot in if hot == home { vec![home] } else { vec![hot, home] } {
-                let s = render_note(if slot == hot { &mut main } else { &mut other }, &p, slot);
-                have[slot] = true;
+            let mut along: Vec<usize> = std::iter::once(home).chain((0..NOTE_SLOTS).filter(|&s| played[s])).filter(|&s| s != hot).collect();
+            along.dedup();
+            along.sort_by_key(|&s| (s != home, (s as i64 - hot as i64).abs()));
+            along.dedup();
+            along.truncate(helpers.len());
+            let done: Vec<(usize, Arc<Sound>)> = std::thread::scope(|sc| {
+                let p = &p;
+                let hs: Vec<_> = along.iter().zip(helpers.iter_mut()).map(|(&slot, eng)| sc.spawn(move || (slot, render_note(eng, p, slot)))).collect();
+                let s = render_note(&mut main, p, hot);
                 let mut b = sh.bank.lock().unwrap();
-                if slot == hot {
-                    for n in b.notes.iter_mut() { *n = None; }
-                    b.base = Some(s.clone());
-                    b.key = k;
-                    b.dice = None;
-                }
-                b.notes[slot] = Some(s);
-            }
+                for n in b.notes.iter_mut() { *n = None; }
+                b.base = Some(s.clone());
+                b.key = k;
+                b.dice = None;
+                b.notes[hot] = Some(s);
+                drop(b);
+                hs.into_iter().filter_map(|h| h.join().ok()).collect()
+            });
+            have[hot] = true;
+            let mut b = sh.bank.lock().unwrap();
+            for (slot, s) in done { have[slot] = true; b.notes[slot] = Some(s); }
+            drop(b);
             sh.dice_used.store(true, Ordering::Relaxed);
             pending_view = Some(p.clone());
         }
